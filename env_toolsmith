@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  echo "$script_afp:: This script must be sourced, not executed."
+  exit 1
+fi
+
+export ROLE=toolsmith
+source tool_shared/bespoke🖉/env
+export ENV=$ROLE
+

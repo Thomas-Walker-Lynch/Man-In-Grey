@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  echo "$script_afp:: This script must be sourced, not executed."
+  exit 1
+fi
+
+# without this bash takes non-matching globs literally
+shopt -s nullglob
+
+# --------------------------------------------------------------------------------
+# project definition
+
+# actual absolute director path for this script file
+
+  script_adp(){
+    dirname "$script_afp"
+  }
+
+# assume this script is located  $REPO_HOME/tools_shared/bespoke and work backwards
+# to get $REPO_HOME, etc.
+
+  REPO_HOME=$(dirname "$(dirname "$(script_adp)")")
+  echo REPO_HOME "$REPO_HOME"
+
+  PROJECT=$(basename "$REPO_HOME")
+  echo PROJECT "$PROJECT"
+
+  # set the prompt decoration to the name of the project
+  PROMPT_DECOR=$PROJECT
+
+  export REPO_HOME PROJECT PROMPT_DECOR
+
+# --------------------------------------------------------------------------------
+# Project wide Tool setup
+#
+
+export VIRTUAL_ENV="$REPO_HOME/tool_shared/third_party/Python"
+export PYTHON_HOME="$VIRTUAL_ENV"
+unset PYTHONHOME
+
+
+# --------------------------------------------------------------------------------
+# PATH
+#   precedence: last defined, first discovered
+  
+  PATH="$REPO_HOME/tool_shared/third_party/RT-project-share/release/bash:$PATH"
+  PATH="$REPO_HOME/tool_shared/third_party/RT-project-share/release/amd64:$PATH"
+  PATH="$REPO_HOME/tool_shared/third_party:$PATH"
+  PATH="$REPO_HOME/tool_shared/customized:$PATH"
+  PATH="$REPO_HOME"/tool_shared/bespoke🖉:"$PATH"
+
+  # Remove duplicates
+  clean_path() {
+    PATH=$(echo ":$PATH" | awk -v RS=: -v ORS=: '!seen[$0]++' | sed 's/^://; s/:$//')
+  }
+  clean_path
+  export PATH
+
+# --------------------------------------------------------------------------------
+# the following functions are provided for other scripts to use.
+# at the top of files that make use of these functions put the following line:
+#  script_afp=$(realpath "${BASH_SOURCE[0]}")
+#
+
+  ## script's filename
+  script_fn(){
+    basename "$script_afp"
+  }
+
+  ## script's dirpath relative to $REPO_HOME
+  script_fp(){
+    realpath --relative-to="${REPO_HOME}" "$script_afp"
+  }
+
+  ## script's dirpath relative to $REPO_HOME
+  script_dp(){
+    dirname "$(script_fp)"
+  }
+
+  export -f script_adp script_fn script_dp script_fp
+
+#--------------------------------------------------------------------------------
+# used by release scripts
+#
+
+  install_file() {
+    if [ "$#" -lt 3 ]; then
+      echo "env::install_file usage: install_file <source1> <source2> ... <target_dir> <permissions>"
+      return 1
+    fi
+
+    perms="${@: -1}"         # Last argument is permissions
+    target_dp="${@: -2:1}"   # Second-to-last argument is the target directory
+    sources=("${@:1:$#-2}")  # All other arguments are source files
+
+    if [ ! -d "$target_dp" ]; then
+      echo "env::install_file no install done: target directory '$target_dp' does not exist."
+      return 1
+    fi
+
+    for source_fp in "${sources[@]}"; do
+      if [ ! -f "$source_fp" ]; then
+        echo "env::install_file: source file '$source_fp' does not exist."
+        return 1
+      fi
+
+      target_file="$target_dp/$(basename "$source_fp")"
+
+      if ! install -m "$perms" "$source_fp" "$target_file"; then
+        echo "env::install_file: Failed to install $(basename "$source_fp") to $target_dp"
+        return 1
+      else
+        echo "env::install_file: installed $(basename "$source_fp") to $target_dp with permissions $perms"
+      fi
+    done
+  }
+
+  export -f install_file
+
+# --------------------------------------------------------------------------------
+# closing
+#
+  if [[ -z "$ENV" ]]; then
+    export ENV=$(script_fp)
+  fi
+

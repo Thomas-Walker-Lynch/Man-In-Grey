@@ -1,0 +1,26 @@
+# ─── Python Detritus ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# pytest cache
+.pytest_cache/
+
+# Cython / coverage / profiling
+*.so
+*.gcov
+*.gcda
+*.gcno
+
+# IPython junk
+.ipynb_checkpoints/
+
+# editor backup files (optional)
+*~
+
+# ─── Virtualenv (just in case someone makes one elsewhere) ────────
+venv/
+.venv/
+env/
+ENV/

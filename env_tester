@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  echo "$script_afp:: This script must be sourced, not executed."
+  exit 1
+fi
+
+export ROLE=tester
+source tool_shared/bespoke🖉/env
+
+if [[ ":$PATH:" != *":$PYTHON_HOME/bin:"* ]]; then
+  export PATH="$PYTHON_HOME/bin:$PATH"
+fi
+
+cd $ROLE
+export ENV=$ROLE
+

@@ -1,0 +1,75 @@
+#+TITLE: Installing Python in Harmony
+#+AUTHOR: Thomas Walker Lynch
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+
+This document describes how to install a project-local Python environment under:
+
+#+begin_src bash
+tool_shared/third_party/Python
+#+end_src
+
+This environment is shared across the =developer= and =tester= roles and is automatically activated through their respective =env_<role>= scripts.
+
+* Precondition
+
+Ensure the following:
+
+- You are in a POSIX shell with =python3= installed.
+- The =python3-venv= package is available (on Debian: =sudo apt install python3-venv=).
+- You have sourced the Harmony environment via =env_toolsmith= to initialize =REPO_HOME= and related variables.
+
+* Step-by-Step Installation
+
+1. Source the Harmony environment:
+   #+begin_src bash
+   source env_toolsmith
+   #+end_src
+
+2. Create the virtual environment:
+   #+begin_src bash
+   python3 -m venv "$REPO_HOME/tool_shared/third_party/Python"
+   #+end_src
+
+3. Activate it temporarily to install required packages:
+   #+begin_src bash
+   source "$REPO_HOME/tool_shared/third_party/Python/bin/activate"
+   pip install --upgrade pip
+   pip install pytest  # Add any shared packages here
+   deactivate
+   #+end_src
+
+4. Rename Python's default activate and deactivate:
+   Harmony provides its own role-aware environment management. Using Python’s default activation scripts may interfere with prompt logic, PATH order, and role-specific behavior.
+
+   Disable the default scripts by renaming them:
+   #+begin_src bash
+   mv "$REPO_HOME/tool_shared/third_party/Python/bin/activate" \
+      "$REPO_HOME/tool_shared/third_party/Python/bin/activate_deprecated"
+   #+end_src
+
+   This ensures that accidental sourcing of Python’s =activate= script won't override Harmony's environment setup.
+
+5. Verify installation:
+   #+begin_src bash
+   ls "$REPO_HOME/tool_shared/third_party/Python/bin/python3"
+   #+end_src
+
+   The binary should exist and report a working Python interpreter when run.
+
+* Notes
+
+- The virtual environment is deliberately named =Python=, not =venv=, to reflect its role as a shared system component.
+- Harmony environment scripts define and control =VIRTUAL_ENV=, =PYTHON_HOME=, and =PATH=, making Python activation seamless and uniform.
+- There is no need to use Python’s =bin/activate= directly — it is fully replaced by Harmony’s environment logic.
+
+* Related Files
+
+- =tool_shared/bespoke🖉/env=
+- =tool_shared/bespoke🖉/env_source=
+- =env_developer=, =env_tester=, =env_toolsmith=
+
+* Last Verified
+
+2025-05-19 :: Activate/deactivate renamed post-install. Requires Harmony environment sourcing prior to execution.

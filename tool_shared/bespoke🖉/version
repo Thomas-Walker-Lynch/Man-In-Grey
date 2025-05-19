@@ -1,0 +1,5 @@
+#!/bin/env bash
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+
+echo "Harmony v0.1 2025-05-19"
+
