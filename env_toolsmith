@@ -6,6 +6,6 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 fi
 
 export ROLE=toolsmith
-source tool_shared/bespoke🖉/env
+source tool_shared/bespoke/env
 export ENV=$ROLE
 

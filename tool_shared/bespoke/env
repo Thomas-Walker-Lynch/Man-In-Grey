@@ -48,7 +48,7 @@ unset PYTHONHOME
   PATH="$REPO_HOME/tool_shared/third_party/RT-project-share/release/amd64:$PATH"
   PATH="$REPO_HOME/tool_shared/third_party:$PATH"
   PATH="$REPO_HOME/tool_shared/customized:$PATH"
-  PATH="$REPO_HOME"/tool_shared/bespoke🖉:"$PATH"
+  PATH="$REPO_HOME"/tool_shared/bespoke:"$PATH"
 
   # Remove duplicates
   clean_path() {

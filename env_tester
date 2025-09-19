@@ -6,7 +6,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 fi
 
 export ROLE=tester
-source tool_shared/bespoke🖉/env
+source tool_shared/bespoke/env
 
 if [[ ":$PATH:" != *":$PYTHON_HOME/bin:"* ]]; then
   export PATH="$PYTHON_HOME/bin:$PATH"

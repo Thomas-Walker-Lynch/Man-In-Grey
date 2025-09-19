@@ -66,8 +66,8 @@ Ensure the following:
 
 * Related Files
 
-- =tool_shared/bespoke🖉/env=
-- =tool_shared/bespoke🖉/env_source=
+- =tool_shared/bespoke/env=
+- =tool_shared/bespoke/env_source=
 - =env_developer=, =env_tester=, =env_toolsmith=
 
 * Last Verified
