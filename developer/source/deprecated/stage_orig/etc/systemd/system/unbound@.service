@@ -1,0 +1,19 @@
+[Unit]
+Description=Unbound DNS instance for %i (per-subu tunnel egress)
+After=network-online.target wg-quick@%i.service
+Requires=wg-quick@%i.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/unbound -d -p -c /etc/unbound/unbound-%i.conf
+User=unbound
+Group=unbound
+Restart=on-failure
+RestartSec=2s
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

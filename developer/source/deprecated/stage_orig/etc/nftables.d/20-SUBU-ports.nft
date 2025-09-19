@@ -1,0 +1,47 @@
+table inet SUBU-DNS-REDIRECT {
+  chain output {
+    type nat hook output priority -100; policy accept;
+
+    # Redirect DNS for the subu UIDs to local Unbound listeners
+    meta skuid 2017 udp dport 53 redirect to :5301
+    meta skuid 2018 udp dport 53 redirect to :5302
+    meta skuid 2017 tcp dport 53 redirect to :5301
+    meta skuid 2018 tcp dport 53 redirect to :5302
+  }
+}
+
+table inet SUBU-PORT-EGRESS {
+  chain output {
+    type filter hook output priority 0; policy accept;
+
+    # Always allow loopback on egress
+    oifname "lo" accept
+
+    # No IPv6 for subu (until you reintroduce v6)
+    meta skuid {2017,2018} meta nfproto ipv6 counter comment "no IPv6 for subu" drop
+
+    ##### x6 (UID 2018)
+    # Block some exfil channels regardless of iface
+    meta skuid 2018 tcp dport {25,465,587}  counter comment "block SMTP/Submission" drop
+    meta skuid 2018 udp dport {3478,5349,19302-19309} counter comment "block STUN/TURN" drop
+    meta skuid 2018 tcp dport 853            counter comment "block DoT (TCP/853)" drop
+
+    # (Optional) allow ICMP echo out via x6
+    meta skuid 2018 oifname "x6" ip protocol icmp icmp type echo-request accept
+
+    # Enforce interface binding
+    meta skuid 2018 oifname "x6" accept
+    meta skuid 2018 oifname != "x6" counter comment "x6 must use wg x6" drop
+
+    ##### US (UID 2017)
+    meta skuid 2017 tcp dport {25,465,587}  counter drop comment "block SMTP/Submission"
+    meta skuid 2017 udp dport {3478,5349,19302-19309} counter drop comment "block STUN/TURN"
+    meta skuid 2017 tcp dport 853            counter drop comment "block DoT (TCP/853)"
+
+    # (Optional) ICMP via US
+    meta skuid 2017 oifname "US" ip protocol icmp icmp type echo-request accept
+
+    meta skuid 2017 oifname "US" accept
+    meta skuid 2017 oifname != "US" counter comment "US must use wg US" drop
+  }
+}
