@@ -1,0 +1,8 @@
+
+This project is based on the Harmony skeleton, read more about it in Harmony/document
+on github. Also see RT-project-share.
+
+The Harmony/document/convention/Workflow.org document has been copied here, as it
+explains how to use the Harmony skeleton.
+
+
