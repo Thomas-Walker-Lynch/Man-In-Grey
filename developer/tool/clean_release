@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+DEV_DIR="$(CDPATH= cd -- "$SELF_DIR/.." && pwd -P)"
+REPO_HOME="$(CDPATH= cd -- "$DEV_DIR/.." && pwd -P)"
+REL_DIR="${REPO_HOME}/release"
+
+SUDO_BIN="${SUDO:-sudo}"
+
+arch_norm() {
+  local m
+  m="$(uname -m | tr '[:upper:]' '[:lower:]')"
+  case "$m" in
+    amd64|x64) echo x86_64 ;;
+    x86_64)    echo x86_64 ;;
+    i386|i486|i586|i686) echo i686 ;;
+    arm64|aarch64) echo aarch64 ;;
+    armv7l)    echo armv7l ;;
+    armv6l)    echo armv6l ;;
+    riscv64)   echo riscv64 ;;
+    ppc64le|powerpc64le) echo ppc64le ;;
+    s390x)     echo s390x ;;
+    *)         echo "$m" ;;
+  esac
+}
+ARCH="$(arch_norm)"
+
+TARGET_DIR="${REL_DIR}/${ARCH}"
+TARGET_BIN="${TARGET_DIR}/man_in_grey_apply"
+
+if [[ -e "$TARGET_BIN" ]]; then
+  echo "removing ${TARGET_BIN}"
+  $SUDO_BIN rm -f "$TARGET_BIN"
+  # quietly drop the dir if now empty
+  rmdir "$TARGET_DIR" 2>/dev/null || true
+else
+  echo "nothing to remove for arch ${ARCH} (${TARGET_BIN} not found)"
+fi
+
+echo "left intact: ${REL_DIR}/python3 and ${REL_DIR}/shell and other arch dirs"

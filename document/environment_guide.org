@@ -1,0 +1,251 @@
+#+title: Man_In_Grey Environment Guide
+#+author: Toolsmith & Developers
+#+options: toc:2 num:nil
+
+* Purpose
+This document explains how the Man_In_Grey runtime environment is assembled and how
+developers should work within it. It covers:
+- Role-scoped shells (e.g., =developer=)
+- PATH composition and tool discovery
+- Shared helper functions/vars available to scripts
+- Where and how developers customize their own environment safely
+
+* Quick Start (Developer)
+From =$REPO_HOME=:
+#+begin_src bash
+source env_developer          # must be *sourced*, not executed
+hash -r                       # refresh the shell’s command cache
+# you are now in $REPO_HOME/developer with role tools on PATH
+#+end_src
+
+Common actions (cwd = =$REPO_HOME/developer=):
+#+begin_src bash
+compile                       # build gasket (dev/test)
+release                       # publish to ../release (little loop)
+clean_release                 # remove current-arch artifacts in ../release
+#+end_src
+
+* Roles & Directory Conventions
+- =ROLE=: one of =developer=, =tester=, … (you’re in =developer= here).
+- Repo layout (selected):
+  - =tool_shared/= :: shared assets for all roles
+  - =developer/tool/= :: per-role tools (your =compile=, =release=, =clean_release=, …)
+  - =release/= :: binary drop (per arch + python3 + shell)
+  - =document/= :: project docs (this file is a good place for it)
+
+* Entry Scripts
+** =env_developer=
+Toolsmith-owned top-level entry. Responsibilities:
+- Source shared =tool_shared/bespoke/env=
+- Set =ROLE= and =ENV=
+- Prepend =$REPO_HOME/$ROLE/tool= to PATH (if present)
+- Ensure Python =bin= path is on PATH (=PYTHON_HOME/bin=)
+- =cd $ROLE=
+- Source =developer/tool/env= for developer’s customizations
+
+=env_developer= must be *sourced*:
+#+begin_src bash
+source env_developer
+#+end_src
+
+** =developer/tool/env=
+Developer-owned customization hook. Must also be *sourced*. Keep local tweaks here
+(aliases, prompts, extra PATH additions), so top-level env stays stable.
+
+* Shared Environment (tool_shared/bespoke/env)
+This script is sourced by all roles. It provides:
+
+** Core Vars
+- =REPO_HOME= :: absolute repo root (auto-inferred)
+- =PROJECT= :: repo basename
+- =PROMPT_DECOR= :: defaults to =PROJECT=
+- =VIRTUAL_ENV=, =PYTHON_HOME= :: local Python install (=tool_shared/third_party/Python=)
+
+** PATH Policy
+Rightmost defined takes precedence (search is left-to-right). The shared script places:
+- Shared third-party tools (RT project share, bespoke, customized, etc.)
+- Then (after =env_developer=) the role’s own tool dir is prefixed:
+  =$REPO_HOME/$ROLE/tool=
+- Then Python’s =bin= if not already present
+
+After sourcing, run =hash -r= to refresh the shell’s command cache.
+
+** Helper Functions (exported)
+- =script_adp= :: absolute dirpath of the *current env script*
+- =script_fp=  :: path relative to =REPO_HOME=
+- =script_dp=  :: dirname of =script_fp=
+- =script_fn=  :: filename of current env script
+- =install_file <src...> <target_dir> <perms>= :: thin wrapper over =install= with logging
+
+These are intended for use inside role tools (e.g., =developer/tool/release= scripts).
+
+* Release Layout (Little Loop)
+The =release/= directory is a self-contained binary drop:
+- =release/x86_64/= (=aarch64=, =armv7l=, =i686=, =ppc64le=, =riscv64=, =s390x=, …)
+  - compiled gasket (=man_in_grey_apply=) for that arch, setuid root (by =release= tool)
+- =release/python3/=
+  - Python components (e.g., =Man_In_Grey.py=, =executor_inner.py=, =Planner.py=, …)
+- =release/shell/=
+  - canonical human entrypoint script (=Man_In_Grey=)
+
+The developer’s =release= tool is responsible for:
+- Building the gasket (from =developer/source=)
+- Installing Python sources into =release/python3=
+- Creating wrapper(s) in =release/shell=
+- Hardening permissions/ownership (root for inner, setuid root for gasket)
+
+* Developer Tools (convention)
+Your =developer/tool/= directory contains executable utilities on PATH:
+
+- =compile= :: build =man_in_grey_apply= in-place for local testing (no release write)
+- =release= :: create/update =../release/= contents (little loop publisher)
+- =clean_release= :: remove current-arch binaries & wrapper(s) (careful; Python stays)
+
+* Calling the Program (two ways)
+1) From the wrapper (what testers use):
+#+begin_src bash
+../release/shell/Man_In_Grey --stage tester/stage_test_0 --phase-2-print
+#+end_src
+2) From dev tree orchestration (during development):
+#+begin_src bash
+python3 developer/source/Man_In_Grey.py --stage tester/stage_test_0 --phase-2-print
+#+end_src
+
+The wrapper auto-detects arch (=uname -m= normalization) and prefers the gasket if present;
+otherwise it falls back to the Python inner.
+
+* Sourcing vs Executing
+All env scripts (=env_developer=, =tool_shared/bespoke/env=, =developer/tool/env=) are
+designed to be *sourced*. Each file checks for accidental execution and exits with a
+helpful message if run as a program.
+
+* What Developers May Customize
+Put customizations in =developer/tool/env=, e.g.:
+#+begin_src bash
+# prompt tweak using PROMPT_DECOR
+PS1="[\u@\h ${PROMPT_DECOR}:\w]$ "
+
+# quick jump helpers
+alias repo='cd "$REPO_HOME"'
+alias dev='cd "$REPO_HOME/developer"'
+
+# sanity
+alias whichp='type -a'
+#+end_src
+
+Avoid editing =env_developer= and shared files unless you are the toolsmith.
+
+* Role-based Unix groups & shared write access (developer / tester / toolsmith)
+
+Map the *roles* directly to Unix *groups* named =developer=, =tester=, and =toolsmith=.
+Make role directories group-owned and group-writable so collaboration “just works”.
+New files inherit the directory’s group via the setgid bit.
+
+** Define role groups and membership
+#+begin_src bash
+sudo groupadd developer
+sudo groupadd tester
+sudo groupadd toolsmith
+
+# add users to their roles (repeat per user)
+sudo usermod -aG developer alice
+sudo usermod -aG tester    bob
+sudo usermod -aG toolsmith charlie
+#+end_src
+
+** Make role directories group-owned + setgid
+#+begin_src bash
+# assume $REPO_HOME is the repo root
+sudo chgrp -R developer "$REPO_HOME/developer"
+sudo chgrp -R tester    "$REPO_HOME/tester"
+sudo chgrp -R toolsmith "$REPO_HOME/release"
+
+# directories: g+rwx and setgid (2); usually o+rx is fine
+sudo find "$REPO_HOME/developer" -type d -exec chmod 2775 {} +
+sudo find "$REPO_HOME/tester"    -type d -exec chmod 2775 {} +
+sudo find "$REPO_HOME/release"   -type d -exec chmod 2775 {} +
+
+# existing files: user+group writable (adjust to taste)
+sudo find "$REPO_HOME/developer" -type f -exec chmod 0664 {} +
+sudo find "$REPO_HOME/tester"    -type f -exec chmod 0664 {} +
+sudo find "$REPO_HOME/release"   -type f -exec chmod 0664 {} +
+#+end_src
+
+** Developer umask (inherit group write by default)
+Set =umask 002= in the *developer* environment so new files are =0664= and dirs =0775=:
+#+begin_src bash
+# in developer/tool/env
+umask 002
+#+end_src
+If you want role-only access (no “other”), use =umask 007=.
+
+** Git repo configured for group sharing
+#+begin_src bash
+cd "$REPO_HOME"
+git config --local core.sharedRepository group
+#+end_src
+
+** Optional: default ACLs (stronger inheritance)
+If some tools drop group bits, use default ACLs so everything inherits group rwx:
+#+begin_src bash
+sudo setfacl -R  -m g:developer:rwx       "$REPO_HOME/developer"
+sudo setfacl -R  -d -m g:developer:rwx    "$REPO_HOME/developer"
+
+sudo setfacl -R  -m g:tester:rwx          "$REPO_HOME/tester"
+sudo setfacl -R  -d -m g:tester:rwx       "$REPO_HOME/tester"
+#+end_src
+(Install the =acl= package if =setfacl/getfacl= are missing.)
+
+** Release & privileged artifacts
+- Make =release/= group-owned by =toolsmith= so only toolsmiths modify binaries/wrappers.
+- Privileged binaries (e.g. the setuid gasket) remain =root:root= with modes like =4755=;
+  directory group ownership still helps coordination.
+- Use =install= with explicit owner/group/mode:
+#+begin_src bash
+install -D -o root -g toolsmith -m 0755  developer/source/Man_In_Grey.py \
+  "$REPO_HOME/release/python3/Man_In_Grey.py"
+
+install -D -o root -g toolsmith -m 4755  developer/build/man_in_grey_apply \
+  "$REPO_HOME/release/$(uname -m)/man_in_grey_apply"
+#+end_src
+
+** Verification cheatsheet
+#+begin_src bash
+stat -c '%A %U:%G %n' "$REPO_HOME" "$REPO_HOME/developer" "$REPO_HOME/tester" "$REPO_HOME/release"
+namei -l "$REPO_HOME/developer"
+id -nG   # confirm your groups
+#+end_src
+
+*Note:* These *role groups* (developer/tester/toolsmith) are separate from any
+*privileged gate* group used at runtime (e.g., =mig= for “allowed to apply”). Keep
+both models: role groups for collaboration; a minimal privileged group for execution gates.
+
+
+
+* Notes on Python
+The toolsmith-provided Python lives under:
+- =tool_shared/third_party/Python= (a virtualenv-style tree)
+- Its =bin= is appended to PATH by =env_developer=
+- This keeps developer machines consistent without relying on system Python
+
+To confirm:
+#+begin_src bash
+python3 -V
+which python3
+#+end_src
+
+* Troubleshooting Checklist
+- “Command not found” for =compile/release/clean_release=:
+  - Ensure you =source env_developer=
+  - Verify =$REPO_HOME/developer/tool= is on PATH (=echo "$PATH" | tr : '\n' | nl=)
+  - =chmod +x= your tool scripts and run =hash -r=
+- Wrong repo root:
+  - Echo =REPO_HOME= to verify auto-detection
+- Release artifacts missing:
+  - Run =release= (little loop) and re-check =../release= layout
+- Gasket permission errors:
+  - The =release= tool uses =sudo chown/chmod=; ensure your user can escalate
+
+* Glossary
+- *Little loop*: Build & publish to =release/= for local testing (no system install).
+- *Big loop*: System-level installation (later), outside the scope of this doc.

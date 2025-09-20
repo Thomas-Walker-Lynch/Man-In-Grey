@@ -338,7 +338,7 @@ def main(argv: list[str]|None=None)-> int:
   # Phase 0: bootstrap & stop (no scan)
   stage_root = Path(args.stage)
   try:
-    filter_path = _ensure_filter_file(args.filter or None)
+    filter_path = _ensure_filter_file(args.input_acceptance or None)
   except Exception as e:
     print(f"error: {e}" ,file=sys.stderr)
     return 2

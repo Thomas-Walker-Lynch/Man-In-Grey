@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# bless_release — elevate released artifacts so privileged apply is possible
+# usage: bless_release [arch]
+# default arch = normalized uname -m → {x86_64,i686,aarch64,armv7l,armv6l,riscv64,ppc64le,s390x}
+
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  echo "error: bless_release must run as root" >&2
+  exit 2
+fi
+
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+REPO_HOME="$(CDPATH= cd -- "$SELF_DIR/../.." && pwd)"
+REL_DIR="${REPO_HOME}/release"
+
+# normalize arch
+raw="$(uname -m | tr '[:upper:]' '[:lower:]')"
+case "$raw" in
+  amd64|x64) arch="x86_64" ;;
+  x86_64)    arch="x86_64" ;;
+  i386|i486|i586|i686) arch="i686" ;;
+  arm64|aarch64) arch="aarch64" ;;
+  armv7l)    arch="armv7l" ;;
+  armv6l)    arch="armv6l" ;;
+  riscv64)   arch="riscv64" ;;
+  ppc64le|powerpc64le) arch="ppc64le" ;;
+  s390x)     arch="s390x" ;;
+  *)         arch="$raw" ;;
+esac
+[[ $# -ge 1 ]] && arch="$1"
+
+GASKET="${REL_DIR}/${arch}/man_in_grey_apply"
+INNER_PY="${REL_DIR}/python3/executor_inner.py"
+
+# sanity checks
+[[ -x "$GASKET" ]] || { echo "error: gasket not found/executable: $GASKET" >&2; exit 2; }
+[[ -f "$INNER_PY" ]] || { echo "error: inner executor missing: $INNER_PY" >&2; exit 2; }
+
+# set ownership/mode
+chown root:root "$GASKET" "$INNER_PY"
+chmod 4755 "$GASKET"       # setuid root
+chmod 0755 "$INNER_PY"     # root-owned, not setuid
+
+echo "blessed:"
+echo "  gasket: $GASKET  (root:root, 4755)"
+echo "  inner : $INNER_PY (root:root, 0755)"

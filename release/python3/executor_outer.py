@@ -5,7 +5,7 @@ executor.py — StageHand outer/inner executor (MVP; UNPRIVILEGED for now)
 Phase 0 (bootstrap):
   - Ensure filter program exists (create default in CWD if --filter omitted)
   - Validate --stage exists
-  - If --phase-0-then-stop: exit here (no scan ,no execution)
+  - If --phase-0-then-stop: exit here (no scan, no execution)
 
 Phase 1 (outer):
   - Discover every file under --stage; acceptance filter decides which to include
@@ -35,15 +35,19 @@ import stat
 
 # Local module: Planner.py (same directory)
 from Planner import (
-  Planner ,PlanProvenance ,WriteFileMeta ,Journal ,Command,
+  Planner
+  ,PlanProvenance
+  ,WriteFileMeta
+  ,Journal
+  ,Command
 )
 
-# -------- default filter template (written to CWD when --filter not provided) --------
+# -------- default filter template (written to CWD when --input_acceptance not provided) --------
 
-DEFAULT_FILTER_FILENAME = "stagehand_filter.py"
+DEFAULT_FILTER_FILENAME = "Man_In_Gray_input_acceptance.py"
 
-DEFAULT_FILTER_SOURCE = """# StageHand acceptance filter (default template)
-# Return True to include a config file ,False to skip it.
+DEFAULT_FILTER_SOURCE = """# Man_In_Gray_input_acceptance (default template)
+# Return True to include a config file, False to skip it.
 # You receive a PlanProvenance object named `prov`.
 #
 # prov fields commonly used here:
@@ -81,22 +85,22 @@ def accept(prov):
 
 # -------- utilities --------
 
-def iso_utc_now_str() -> str:
+def iso_utc_now_str()-> str:
   return _dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
 
-def _ensure_filter_file(filter_arg: str|None) -> Path:
+def _ensure_filter_file(filter_arg: str|None)-> Path:
   """
-  If --filter is provided ,return that path (must exist).
-  Otherwise ,create ./stagehand_filter.py in the CWD if missing (writing a helpful template),
+  If --input_acceptance is provided, return that path (must exist).
+  Otherwise, create ./stagehand_filter.py in the CWD if missing (writing a helpful template),
   and return its path.
   """
   if filter_arg:
     p = Path(filter_arg)
     if not p.is_file():
-      raise RuntimeError(f"--filter file not found: {p}")
+      raise RuntimeError(f"--input_acceptance file not found: {p}")
     return p
 
-  p = Path.cwd() / DEFAULT_FILTER_FILENAME
+  p = Path.cwd()/DEFAULT_FILTER_FILENAME
   if not p.exists():
     try:
       p.write_text(DEFAULT_FILTER_SOURCE ,encoding="utf-8")
@@ -131,7 +135,11 @@ def _walk_all_files(stage_root: Path):
         # unreadable/broken entries skipped
         continue
 
-def find_config_paths(stage_root: Path ,accept_func) -> list[Path]:
+def find_config_paths(stage_root: Path ,accept_func)-> list[Path]:
+  """
+  Return files accepted by the Python acceptance function: accept(prov) → True/False.
+  Ordered breadth-first by depth, then lexicographically by relative path.
+  """
   out: list[tuple[int ,str ,Path]] = []
   root = stage_root.resolve()
   for p in _walk_all_files(stage_root):
@@ -147,13 +155,13 @@ def find_config_paths(stage_root: Path ,accept_func) -> list[Path]:
 
 # --- run all configs into ONE planner ---
 
-def _run_all_configs_into_single_planner(stage_root: Path ,cfgs: list[Path]) -> Planner:
+def _run_all_configs_into_single_planner(stage_root: Path ,cfgs: list[Path])-> Planner:
   """
-  Create a single Planner and execute each config's configure(prov ,planner ,WriteFileMeta)
+  Create a single Planner and execute each config's configure(prov, planner, WriteFileMeta)
   against it. Returns that single Planner containing the entire plan.
   """
   # seed with synthetic provenance; we overwrite per config before execution
-  aggregate_prov = PlanProvenance(stage_root=stage_root ,config_path=stage_root / "(aggregate).py")
+  aggregate_prov = PlanProvenance(stage_root=stage_root ,config_path=stage_root/"(aggregate).py")
   planner = Planner(provenance=aggregate_prov)
 
   for cfg in cfgs:
@@ -167,22 +175,22 @@ def _run_all_configs_into_single_planner(stage_root: Path ,cfgs: list[Path]) -> 
 
     fn(prov ,planner ,WriteFileMeta)
 
-  # annotate meta once ,on the single planner's journal
+  # annotate meta once, on the single planner's journal
   j = planner.journal()
   j.set_meta(
-    generator_prog_str="executor.py",
-    generated_at_utc_str=iso_utc_now_str(),
-    user_name_str=getpass.getuser(),
-    host_name_str=os.uname().nodename if hasattr(os ,"uname") else "unknown",
-    stage_root_dpath_str=str(stage_root.resolve()),
-    configs_list=[str(p.resolve().relative_to(stage_root.resolve())) for p in cfgs],
+    generator_prog_str="executor.py"
+    ,generated_at_utc_str=iso_utc_now_str()
+    ,user_name_str=getpass.getuser()
+    ,host_name_str=os.uname().nodename if hasattr(os ,"uname") else "unknown"
+    ,stage_root_dpath_str=str(stage_root.resolve())
+    ,configs_list=[str(p.resolve().relative_to(stage_root.resolve())) for p in cfgs]
   )
   return planner
 
 # ----- CBOR “matchbox” (simple wrapper kept local to executor) -----
 
-def _plan_to_cbor_bytes(planner: Planner) -> bytes:
-  """Serialize a Planner's Journal to CBOR bytes."""
+def _plan_to_cbor_bytes(planner: Planner)-> bytes:
+  "Serialize a Planner's Journal to CBOR bytes."
   try:
     import cbor2
   except Exception as e:
@@ -190,8 +198,8 @@ def _plan_to_cbor_bytes(planner: Planner) -> bytes:
   plan_dict = planner.journal().as_dictionary()
   return cbor2.dumps(plan_dict ,canonical=True)
 
-def _journal_from_cbor_bytes(data: bytes) -> Journal:
-  """Rebuild a Journal from CBOR bytes."""
+def _journal_from_cbor_bytes(data: bytes)-> Journal:
+  "Rebuild a Journal from CBOR bytes."
   try:
     import cbor2
   except Exception as e:
@@ -203,8 +211,8 @@ def _journal_from_cbor_bytes(data: bytes) -> Journal:
 
 # -------- inner executor (phase 2) --------
 
-def _inner_main(plan_path: Path ,phase2_print: bool ,phase2_then_stop: bool) -> int:
-  """Inner executor path: decode CBOR → Journal; optionally print; (apply TBD)."""
+def _inner_main(plan_path: Path ,phase2_print: bool ,phase2_then_stop: bool)-> int:
+  "Inner executor path: decode CBOR → Journal; optionally print; (apply TBD)."
   try:
     data = Path(plan_path).read_bytes()
   except Exception as e:
@@ -228,7 +236,7 @@ def _inner_main(plan_path: Path ,phase2_print: bool ,phase2_then_stop: bool) -> 
 
 # -------- outer executor (phase 1 & handoff) --------
 
-def _outer_main(stage_root: Path ,accept_func ,args) -> int:
+def _outer_main(stage_root: Path ,accept_func ,args)-> int:
   if not stage_root.is_dir():
     print(f"error: --stage not a directory: {stage_root}" ,file=sys.stderr)
     return 2
@@ -252,7 +260,7 @@ def _outer_main(stage_root: Path ,accept_func ,args) -> int:
   if args.phase_1_then_stop:
     return 0
 
-  # Phase 2: encode CBOR and invoke inner path (same script ,--inner)
+  # Phase 2: encode CBOR and invoke inner path (same script, --inner)
   try:
     cbor_bytes = _plan_to_cbor_bytes(master)
   except Exception as e:
@@ -265,10 +273,10 @@ def _outer_main(stage_root: Path ,accept_func ,args) -> int:
 
   try:
     cmd = [
-      sys.executable,
-      str(Path(__file__).resolve()),
-      "--inner",
-      "--plan" ,plan_path,
+      sys.executable
+      ,str(Path(__file__).resolve())
+      ,"--inner"
+      ,"--plan" ,plan_path
     ]
     if args.phase_2_print:
       cmd.append("--phase-2-print")
@@ -285,23 +293,23 @@ def _outer_main(stage_root: Path ,accept_func ,args) -> int:
 
 # -------- CLI --------
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str]|None=None)-> int:
   ap = argparse.ArgumentParser(
-    prog="executor.py",
-    description="StageHand outer/inner executor (plan → CBOR → decode).",
+    prog="executor.py"
+    ,description="StageHand outer/inner executor (plan → CBOR → decode)."
   )
-  ap.add_argument("--stage" ,default="stage",
-                  help="stage root directory (default: ./stage)")
+  ap.add_argument("--stage" ,default="stage"
+                  ,help="stage root directory (default: ./stage)")
   ap.add_argument(
-    "--filter",
-    default="",
-    help=f"path to acceptance filter program exporting accept(prov) "
-         f"(default: ./{DEFAULT_FILTER_FILENAME}; created if missing)"
+    "--input_acceptance"
+    ,default=""
+    ,help=f"path to acceptance filter program exporting accept(prov) "
+          f"(default: ./{DEFAULT_FILTER_FILENAME}; created if missing)"
   )
   ap.add_argument(
-    "--phase-0-then-stop",
-    action="store_true",
-    help="stop after arg checks & filter bootstrap (no stage scan)"
+    "--phase-0-then-stop"
+    ,action="store_true"
+    ,help="stop after arg checks & filter bootstrap (no stage scan)"
   )
 
   # Phase-1 (outer) controls
@@ -323,14 +331,14 @@ def main(argv: list[str] | None = None) -> int:
     if not args.plan:
       print("error: --inner requires --plan <file>" ,file=sys.stderr)
       return 2
-    return _inner_main(Path(args.plan),
-                       phase2_print=args.phase_2_print,
-                       phase2_then_stop=args.phase_2_then_stop)
+    return _inner_main(Path(args.plan)
+                       ,phase2_print=args.phase_2_print
+                       ,phase2_then_stop=args.phase_2_then_stop)
 
   # Phase 0: bootstrap & stop (no scan)
   stage_root = Path(args.stage)
   try:
-    filter_path = _ensure_filter_file(args.filter or None)
+    filter_path = _ensure_filter_file(args.input_acceptance or None)
   except Exception as e:
     print(f"error: {e}" ,file=sys.stderr)
     return 2
@@ -354,6 +362,126 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
   return _outer_main(stage_root ,accept_func ,args)
+
+# inner executor
+# --- secure apply helpers (inner path) ---
+
+import pwd ,errno ,stat as _stat
+
+def _safe_open_dir(dpath: str)-> int:
+  "Open directory without following symlinks; return dirfd."
+  fd = os.open(dpath ,os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+  st = os.fstat(fd)
+  if not _stat.S_ISDIR(st.st_mode):
+    os.close(fd) ; raise OSError("not a directory")
+  return fd
+
+def _exists_regular_nosymlink_at(dirfd: int ,fname: str)-> bool:
+  "True if a regular ,non-symlink file exists at dirfd/fname."
+  try:
+    st = os.lstat(fname ,dir_fd=dirfd)
+  except FileNotFoundError:
+    return False
+  if _stat.S_ISLNK(st.st_mode): raise OSError("target is a symlink")
+  if not _stat.S_ISREG(st.st_mode): raise OSError("target not a regular file")
+  return True
+
+def _fsync_dirfd(dirfd: int)-> None:
+  try:
+    os.fsync(dirfd)
+  except Exception:
+    pass  # some FS may not support; best effort
+
+def _apply_displace(d: str ,f: str)-> None:
+  dirfd = _safe_open_dir(d)
+  try:
+    if not _exists_regular_nosymlink_at(dirfd ,f):
+      return
+    import time as _time
+    ts = _time.strftime("%Y%m%dT%H%M%SZ" ,_time.gmtime())
+    bak = f"{f}.{ts}"
+    os.rename(f ,bak ,src_dir_fd=dirfd ,dst_dir_fd=dirfd)
+    _fsync_dirfd(dirfd)
+  finally:
+    os.close(dirfd)
+
+def _apply_copy(d: str ,f: str ,owner: str ,mode_int: int ,content: bytes)-> None:
+  pw = pwd.getpwnam(owner)
+  uid ,gid = pw.pw_uid ,pw.pw_gid
+  dirfd = _safe_open_dir(d)
+  try:
+    tmp = f".{f}.mig.tmp.{os.getpid()}"
+    tfd = os.open(tmp ,os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW ,0o600 ,dir_fd=dirfd)
+    try:
+      # write all bytes
+      mv = memoryview(content)
+      off = 0
+      while off < len(mv):
+        n = os.write(tfd ,mv[off:])
+        if n <= 0: raise OSError("short write")
+        off += n
+      os.fsync(tfd)
+      os.fchown(tfd ,uid ,gid)
+      os.fchmod(tfd ,mode_int)
+      os.fsync(tfd)
+    finally:
+      os.close(tfd)
+    os.rename(tmp ,f ,src_dir_fd=dirfd ,dst_dir_fd=dirfd)
+    _fsync_dirfd(dirfd)
+  finally:
+    os.close(dirfd)
+
+def _apply_delete(d: str ,f: str)-> None:
+  dirfd = _safe_open_dir(d)
+  try:
+    if not _exists_regular_nosymlink_at(dirfd ,f):
+      return
+    os.unlink(f ,dir_fd=dirfd)
+    _fsync_dirfd(dirfd)
+  finally:
+    os.close(dirfd)
+
+def _mode_from_entry(ad: dict)-> int:
+  m = ad.get("mode_int")
+  if isinstance(m ,int): return m
+  s = ad.get("mode_octal_str")
+  if isinstance(s ,str):
+    try:
+      return int(s ,8)
+    except Exception:
+      pass
+  raise ValueError("invalid mode")
+
+def apply_journal(journal: Journal)-> int:
+  """
+  Apply the decoded journal. Returns 0 on success ,1 if any hard errors occurred.
+  """
+  errs = 0
+  for idx ,entry in enumerate(journal.command_list ,start=1):
+    op = getattr(entry ,"name_str" ,"?")
+    ad = getattr(entry ,"arg_dict" ,{}) or {}
+    try:
+      d = ad["write_file_dpath_str"]
+      f = ad["write_file_fname"]
+      if not (isinstance(d ,str) and d.startswith("/") and isinstance(f ,str) and "/" not in f):
+        raise ValueError("bad path or filename")
+      if op == "displace":
+        _apply_displace(d ,f)
+      elif op == "copy":
+        owner = ad["owner_name"]
+        mode  = _mode_from_entry(ad)
+        content = ad["content_bytes"]
+        if not isinstance(content ,(bytes ,bytearray)): raise ValueError("content_bytes missing")
+        _apply_copy(d ,f ,owner ,mode ,bytes(content))
+      elif op == "delete":
+        _apply_delete(d ,f)
+      else:
+        raise ValueError(f"unknown op: {op}")
+    except Exception as e:
+      errs += 1
+      print(f"apply error [{idx} {op}]: {e}" ,file=sys.stderr)
+  return 0 if errs == 0 else 1
+
 
 if __name__ == "__main__":
   sys.exit(main())

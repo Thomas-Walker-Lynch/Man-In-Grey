@@ -1,17 +1,34 @@
 #!/usr/bin/env bash
+# toolsmith owned developer environment file
+# see developer/tool/env for the developer's customizations
+
 script_afp=$(realpath "${BASH_SOURCE[0]}")
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   echo "$script_afp:: This script must be sourced, not executed."
   exit 1
 fi
 
-export ROLE=developer
+# environment shared by all roles
 source tool_shared/bespoke/env
 
+export ROLE=developer
+export ENV=$ROLE
+if [[ -n "${ROLE:-}" ]] && [[ -d "$REPO_HOME/$ROLE/tool" ]]; then
+  PATH="$REPO_HOME/$ROLE/tool:$PATH"
+fi
+
+# shared tools
 if [[ ":$PATH:" != *":$PYTHON_HOME/bin:"* ]]; then
   export PATH="$PYTHON_HOME/bin:$PATH"
 fi
 
 cd $ROLE
-export ENV=$ROLE
-echo "in environmennt: $ENV"
+
+# pull in developer's customization
+source tool/env $@
+
+echo "in environment: $ENV"
+
+
+
+
