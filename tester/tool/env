@@ -22,7 +22,7 @@ case "$_arch_raw" in
 esac
 export ARCH="$_arch"
 
-# Handy convenience paths (optional)
-export REL_SHELL="$RELEASE/shell"
-export REL_PY="$RELEASE/python3"
-export REL_ARCH="$RELEASE/$ARCH"
+# important release directories the main program call is in RELEASE_SHELL
+export RELEASE_SHELL="$RELEASE/shell"
+export RELEASE_PY="$RELEASE/python3"
+export RELEASE_ARCH="$RELEASE/$ARCH"

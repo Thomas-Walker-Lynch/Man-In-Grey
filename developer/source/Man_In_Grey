@@ -1,57 +1,62 @@
 #!/usr/bin/env bash
-# Man_In_Grey — canonical entrypoint for Man_In_Grey
-# - Resolves repo root via this script’s location (…/release/shell/)
-# - Picks gasket at release/<arch>/man_in_grey_apply when present
-# - Falls back to Python inner executor
-# - Always invokes the Python orchestrator Man_In_Grey.py
-
+# man_in_grey — canonical entrypoint for Man_In_Grey
+# - Resolves repo → release dirs
+# - Requires the privileged gasket (single code path)
+# - Always invokes the Python orchestrator with --apply-cmd <gasket>
 set -euo pipefail
 
-# --- resolve paths ---
-_this="${BASH_SOURCE[0]}"
+# --- resolve this script’s absolute path (portable) ---
+_this="${BASH_SOURCE[0]:-$0}"
+
 if command -v realpath >/dev/null 2>&1; then
-  _this_abs="$(realpath "$_this")"
+  _this_abs="$(realpath -- "$_this")"
 else
-  _this_abs="$(readlink -f "$_this" 2>/dev/null || (cd "$(dirname "$_this")" && pwd -P)/"$(basename "$_this"))"
+  if _tmp="$(readlink -f -- "$_this" 2>/dev/null)"; then
+    _this_abs="${_tmp}"
+  else
+    _dir="$(cd "$(dirname -- "$_this")" && pwd -P)"
+    _base="$(basename -- "$_this")"
+    _this_abs="${_dir}/${_base}"
+  fi
 fi
 
-_shell_dir="$(cd "$(dirname "$_this_abs")" && pwd -P)"   # .../release/shell
-_release_dir="$(cd "$_shell_dir/.." && pwd -P)"         # .../release
-_repo_root="$(cd "$_release_dir/.." && pwd -P)"         # repo root
+_shell_dir="$(cd "$(dirname -- "$_this_abs")" && pwd -P)"   # .../release/shell
+_release_dir="$(cd "${_shell_dir}/.." && pwd -P)"           # .../release
+_repo_root="$(cd "${_release_dir}/.." && pwd -P)"           # repo root
 
-_py_release="$_release_dir/python3"
-_py_dev="$_repo_root/developer/source"
-
-_py_entry=""
-if [[ -f "$_py_release/Man_In_Grey.py" ]]; then
-  _py_entry="$_py_release/Man_In_Grey.py"
-elif [[ -f "$_py_dev/Man_In_Grey.py" ]]; then
-  _py_entry="$_py_dev/Man_In_Grey.py"
+# --- orchestrator path (prefer released copy) ---
+_py_release="${_release_dir}/python3/Man_In_Grey.py"
+_py_dev="${_repo_root}/developer/source/Man_In_Grey.py"
+if [[ -f "$_py_release" ]]; then
+  _py_entry="$_py_release"
+elif [[ -f "$_py_dev" ]]; then
+  _py_entry="$_py_dev"
 else
   echo "error: Man_In_Grey.py not found in release/python3/ or developer/source/" >&2
   exit 2
 fi
 
-# --- arch normalize ---
+# --- arch normalize (uname -m → release/<arch>) ---
 _arch_raw="$(uname -m | tr '[:upper:]' '[:lower:]')"
 case "$_arch_raw" in
-  amd64|x64)              _arch="x86_64" ;;
-  x86_64)                 _arch="x86_64" ;;
-  i386|i486|i586|i686)    _arch="i686" ;;
-  arm64|aarch64)          _arch="aarch64" ;;
-  armv7l)                 _arch="armv7l" ;;
-  armv6l)                 _arch="armv6l" ;;
-  riscv64)                _arch="riscv64" ;;
-  ppc64le|powerpc64le)    _arch="ppc64le" ;;
-  s390x)                  _arch="s390x" ;;
-  *)                      _arch="$_arch_raw" ;;
+  amd64|x64)               _arch="x86_64" ;;
+  x86_64)                  _arch="x86_64" ;;
+  i386|i486|i586|i686)     _arch="i686"   ;;
+  arm64|aarch64)           _arch="aarch64";;
+  armv7l)                  _arch="armv7l" ;;
+  armv6l)                  _arch="armv6l" ;;
+  riscv64)                 _arch="riscv64";;
+  ppc64le|powerpc64le)     _arch="ppc64le";;
+  s390x)                   _arch="s390x"  ;;
+  *)                       _arch="$_arch_raw" ;;
 esac
 
-_gasket="$_release_dir/$_arch/man_in_grey_apply"
-_apply_args=()
-if [[ -x "$_gasket" ]]; then
-  _apply_args=(--apply-cmd "$_gasket")
+_gasket="${_release_dir}/${_arch}/man_in_grey_apply"
+if [[ ! -x "$_gasket" ]]; then
+  echo "error: gasket missing: ${_gasket}" >&2
+  echo "hint: from \$REPO_HOME/developer: run  compile  then  release" >&2
+  exit 2
 fi
 
-# --- run orchestrator ---
-exec python3 "$_py_entry" "${_apply_args[@]}" "$@"
+# --- run orchestrator (single code path via gasket) ---
+exec "${PYTHON:-python3}" "$_py_entry" --apply-cmd "$_gasket" "$@"

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+
+set -euo pipefail
+set -x
+
+./clean_out
+
+echo "first run"
+./run
+diff -qr stage_test_0_out stage_test_0_out_expected_0
+
+echo "second run"
+./run
+diff -qr stage_test_0_out stage_test_0_out_expected_1

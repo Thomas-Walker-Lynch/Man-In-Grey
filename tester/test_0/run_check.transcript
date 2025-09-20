@@ -1,0 +1,38 @@
+# due to file dates, the second check will find differences in file date pairs
+#
+# pass 1
+# Yes—this is a clean PASS ✅
+# started clean,
+# ran Man_In_Grey once → all three outputs appeared with expected content,
+# snapshotted as stage_test_0_out_expected_0.
+# 
+# pass 2
+# Yes—this is a clean PASS ✅
+# web/nginx.conf and unbound_conf were displaced on the 2nd run → timestamped backups created, new files written.
+#
+# net/unbound.conf shows no backup, which is correct because that config does delete then copy (so overwrite without keeping a prior version). If you want a backup there too, switch that entry from delete→displace.
+
+
+2025-09-20 16:12:28Z [Man_In_Grey:tester] Thomas-developer@StanleyPark
+§/home/Thomas/subu_data/developer/project/active/Man_In_Grey/tester/test_0§
+> ./run_check 
++ ./clean_out
++ find stage_test_0_out -type f -exec rm -f '{}' ';'
++ echo 'first run'
+first run
++ ./run
++ /home/Thomas/subu_data/developer/project/Linux/Man_In_Grey/release/shell/Man_In_Grey --stage stage_test_0
++ diff -qr stage_test_0_out stage_test_0_out_expected_0
++ echo 'second run'
+second run
++ ./run
++ /home/Thomas/subu_data/developer/project/Linux/Man_In_Grey/release/shell/Man_In_Grey --stage stage_test_0
++ diff -qr stage_test_0_out stage_test_0_out_expected_1
+Only in stage_test_0_out_expected_1: unbound_conf.20250920T160648Z
+Only in stage_test_0_out: unbound_conf.20250920T161232Z
+Only in stage_test_0_out_expected_1/web: nginx.conf.20250920T160648Z
+Only in stage_test_0_out/web: nginx.conf.20250920T161233Z
+
+2025-09-20 16:12:33Z [Man_In_Grey:tester] Thomas-developer@StanleyPark
+§/home/Thomas/subu_data/developer/project/active/Man_In_Grey/tester/test_0§
+> 

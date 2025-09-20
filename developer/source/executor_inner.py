@@ -158,6 +158,9 @@ def _safe_open_dir(dpath: str)-> int:
     os.close(fd) ; raise OSError("not a directory")
   return fd
 
+
+
+
 def check_sanity_2(journal: Journal)-> list[str]:
   errs: list[str] = []
   opened: dict[str ,int] = {}
@@ -174,14 +177,18 @@ def check_sanity_2(journal: Journal)-> list[str]:
       except Exception as e:
         errs.append(f"[{i}] cannot open destination dir: {d} ({e})")
 
-    # also warn on multiple writes to same (d,f) without displacement/delete
-    seen: set[tuple[str ,str]] = set()
-    for i ,cmd in enumerate(journal.command_list ,start=1):
+    # detect multiple writes to same target without a reset (displace/delete)
+    last_action: dict[tuple[str, str], str] = {}
+    for i, cmd in enumerate(journal.command_list, start=1):
       ad = cmd.arg_dict
-      key = (ad.get("write_file_dpath_str") ,ad.get("write_file_fname"))
-      if key in seen and cmd.name_str == "copy":
-        errs.append(f"[{i}] multiple writes to same target without prior displace/delete: {_dst_from(ad)}")
-      seen.add(key)
+      key = (ad.get("write_file_dpath_str"), ad.get("write_file_fname"))
+      op = cmd.name_str
+      if op == "copy":
+        if last_action.get(key) == "copy":
+          errs.append(f"[{i}] multiple writes to same target without prior displace/delete: {_dst_from(ad)}")
+        last_action[key] = "copy"
+      elif op in {"displace", "delete"}:
+        last_action[key] = op
 
   finally:
     for fd in opened.values():
@@ -378,56 +385,86 @@ def run_executor_inner(
 
 # --- main stays a thin arg wrapper ------------------------------------------
 
-def main(argv: list[str]|None=None)-> int:
+# --- plan input helpers -------------------------------------------------------
 
+def _read_fd_all(fd: int) -> bytes:
+  "Read all bytes from an already-open file descriptor without closing it."
+  chunks: list[bytes] = []
+  while True:
+    try:
+      b = os.read(fd, 65536)
+    except InterruptedError:
+      continue
+    if not b:
+      break
+    chunks.append(b)
+  return b"".join(chunks)
+
+def _read_plan_bytes_from_args(args) -> bytes:
+  """
+  Input priority:
+    1) --plan-fd <n>  (gasket path; do not close fd)
+    2) --plan -       (stdin)
+    3) --plan <file>  (read from filesystem)
+  """
+  if getattr(args, "plan_fd", -1) is not None and args.plan_fd >= 0:
+    return _read_fd_all(args.plan_fd)
+  if args.plan in ("", "-"):
+    return sys.stdin.buffer.read()
+  return Path(args.plan).read_bytes()
+
+def main(argv: list[str] | None = None) -> int:
   ap = argparse.ArgumentParser(
-    prog="executor_inner.py"
-    ,description="Man_In_Gray inner executor (decode → validate → apply)"
+    prog="executor_inner.py",
+    description="Man_In_Grey inner executor (decode → validate → apply)"
   )
-  ap.add_argument("--plan" ,required=True ,help="path to CBOR plan file")
-  ap.add_argument("--phase-2-print" ,action="store_true" ,help="print decoded journal")
-  ap.add_argument("--phase-2-then-stop" ,action="store_true" ,help="stop after print (no apply)")
-  ap.add_argument("--phase-2-wellformed-then-stop" ,action="store_true" ,help="stop after wellformed checks")
-  ap.add_argument("--phase-2-sanity1-then-stop"   ,action="store_true" ,help="stop after sanity-1 checks")
-  ap.add_argument("--phase-2-validity-then-stop"  ,action="store_true" ,help="stop after validity checks")
-  ap.add_argument("--phase-2-sanity2-then-stop"   ,action="store_true" ,help="stop after sanity-2 checks")
 
-  ap.add_argument("--plan" ,default="" ,help="path to CBOR plan file or '-' for stdin")
-  ap.add_argument("--plan-fd" ,type=int ,default=-1 ,help=argparse.SUPPRESS)
+  # Single --plan plus a hidden --plan-fd used by the gasket
+  ap.add_argument(
+    "--plan",
+    default="-",
+    help="path to CBOR plan file or '-' for stdin"
+  )
+  ap.add_argument(
+    "--plan-fd",
+    type=int,
+    default=-1,
+    help=argparse.SUPPRESS
+  )
+
+  # phase-2 gates (same semantics as before)
+  ap.add_argument("--phase-2-print", action="store_true", help="print decoded journal")
+  ap.add_argument("--phase-2-then-stop", action="store_true", help="stop after print (no apply)")
+  ap.add_argument("--phase-2-wellformed-then-stop", action="store_true", help="stop after wellformed checks")
+  ap.add_argument("--phase-2-sanity1-then-stop",   action="store_true", help="stop after sanity-1 checks")
+  ap.add_argument("--phase-2-validity-then-stop",  action="store_true", help="stop after validity checks")
+  ap.add_argument("--phase-2-sanity2-then-stop",   action="store_true", help="stop after sanity-2 checks")
 
   args = ap.parse_args(argv)
 
-  # load plan
+  # Read plan bytes from fd/stdin/file
   try:
-    if args.plan_fd >= 0:
-      import os as _os
-      data = _os.read(args.plan_fd ,1<<30)
-    elif args.plan == "-":
-      import sys as _sys
-      data = _sys.stdin.buffer.read()
-    elif args.plan:
-      data = Path(args.plan).read_bytes()
-    else:
-      print("error: either --plan <file|-> or --plan-fd <n> is required" ,file=sys.stderr)
-      return 2
+    data = _read_plan_bytes_from_args(args)
   except Exception as e:
-    print(f"error: failed to read plan: {e}" ,file=sys.stderr)
+    print(f"error: failed to read plan: {e}", file=sys.stderr)
     return 2
 
+  # Decode CBOR → Journal
   try:
     journal = _journal_from_cbor_bytes(data)
   except Exception as e:
-    print(f"error: failed to decode CBOR: {e}" ,file=sys.stderr)
+    print(f"error: failed to decode CBOR: {e}", file=sys.stderr)
     return 2
 
+  # Run the pipeline
   return executor_inner(
-    journal
-    ,phase_2_print=args.phase_2_print
-    ,phase_2_then_stop=args.phase_2_then_stop
-    ,phase_2_wellformed_then_stop=args.phase_2_wellformed_then_stop
-    ,phase_2_sanity1_then_stop=args.phase_2_sanity1_then_stop
-    ,phase_2_validity_then_stop=args.phase_2_validity_then_stop
-    ,phase_2_sanity2_then_stop=args.phase_2_sanity2_then_stop
+    journal,
+    phase_2_print=args.phase_2_print,
+    phase_2_then_stop=args.phase_2_then_stop,
+    phase_2_wellformed_then_stop=args.phase_2_wellformed_then_stop,
+    phase_2_sanity1_then_stop=args.phase_2_sanity1_then_stop,
+    phase_2_validity_then_stop=args.phase_2_validity_then_stop,
+    phase_2_sanity2_then_stop=args.phase_2_sanity2_then_stop,
   )
 
 if __name__ == "__main__":

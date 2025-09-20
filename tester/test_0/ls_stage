@@ -4,4 +4,5 @@ script_afp=$(realpath "${BASH_SOURCE[0]}")
 set -euo pipefail
 set -x
 
-$RELEASE_SHELL/Man_In_Grey --stage stage_test_0
+find "$1" -type f -print
+

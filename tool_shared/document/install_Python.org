@@ -58,6 +58,13 @@ Ensure the following:
 
    The binary should exist and report a working Python interpreter when run.
 
+6. Install cbor2
+
+   which python3
+   python3 -m pip install --upgrade pip
+   python3 -m pip install cbor2
+
+
 * Notes
 
 - The virtual environment is deliberately named =Python=, not =venv=, to reflect its role as a shared system component.
