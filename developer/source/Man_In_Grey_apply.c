@@ -116,13 +116,13 @@ int main(int argc ,char **argv) {
     return 0;
   }
 
-  /* policy: if privileged but user is not in sudo group, explain and abort */
-  if (privileged && !in_sudo) {
-    struct passwd *pw = getpwuid(getuid());
+  /* policy: if privileged but real user is neither root nor in sudo, abort */
+  uid_t ruid = getuid();
+  if (privileged && ruid != 0 && !in_sudo) {
+    struct passwd *pw = getpwuid(ruid);
     const char *name = pw ? pw->pw_name : "unknown";
     fprintf(stderr,
-      "refusing privileged apply: real user '%s' is not a member of group 'sudo'\n"
-      "hint: either add user to sudo, or remove setuid bit from man_in_grey_apply to test unprivileged.\n",
+      "refusing privileged apply: real user '%s' is not root and not in group 'sudo'\n",
       name
     );
     return 1;
