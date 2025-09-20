@@ -379,6 +379,7 @@ def run_executor_inner(
 # --- main stays a thin arg wrapper ------------------------------------------
 
 def main(argv: list[str]|None=None)-> int:
+
   ap = argparse.ArgumentParser(
     prog="executor_inner.py"
     ,description="Man_In_Gray inner executor (decode → validate → apply)"
@@ -391,13 +392,26 @@ def main(argv: list[str]|None=None)-> int:
   ap.add_argument("--phase-2-validity-then-stop"  ,action="store_true" ,help="stop after validity checks")
   ap.add_argument("--phase-2-sanity2-then-stop"   ,action="store_true" ,help="stop after sanity-2 checks")
 
+  ap.add_argument("--plan" ,default="" ,help="path to CBOR plan file or '-' for stdin")
+  ap.add_argument("--plan-fd" ,type=int ,default=-1 ,help=argparse.SUPPRESS)
+
   args = ap.parse_args(argv)
 
   # load plan
   try:
-    data = Path(args.plan).read_bytes()
+    if args.plan_fd >= 0:
+      import os as _os
+      data = _os.read(args.plan_fd ,1<<30)
+    elif args.plan == "-":
+      import sys as _sys
+      data = _sys.stdin.buffer.read()
+    elif args.plan:
+      data = Path(args.plan).read_bytes()
+    else:
+      print("error: either --plan <file|-> or --plan-fd <n> is required" ,file=sys.stderr)
+      return 2
   except Exception as e:
-    print(f"error: failed to read plan file: {e}" ,file=sys.stderr)
+    print(f"error: failed to read plan: {e}" ,file=sys.stderr)
     return 2
 
   try:

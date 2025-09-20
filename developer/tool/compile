@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# developer/tool/compile — build gasket into developer/machine/<arch> (no sudo)
+set -euo pipefail
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+REPO_HOME="$(CDPATH= cd -- "$SELF_DIR/../.." && pwd)"
+
+raw="$(uname -m | tr '[:upper:]' '[:lower:]')"
+case "$raw" in
+  amd64|x64) arch="x86_64" ;; x86_64) arch="x86_64" ;;
+  i386|i486|i586|i686) arch="i686" ;;
+  arm64|aarch64) arch="aarch64" ;;
+  armv7l) arch="armv7l" ;; armv6l) arch="armv6l" ;;
+  riscv64) arch="riscv64" ;; ppc64le|powerpc64le) arch="ppc64le" ;;
+  s390x) arch="s390x" ;; *) arch="$raw" ;;
+esac
+
+SRC="${REPO_HOME}/developer/source/Man_In_Grey_apply.c"
+OUT_DIR="${REPO_HOME}/developer/machine/${arch}"
+OUT="${OUT_DIR}/man_in_grey_apply"
+
+mkdir -p "$OUT_DIR"
+cc -O2 -Wall -Wextra -Wl,-z,relro -Wl,-z,now -fstack-protector-strong -o "$OUT" "$SRC"
+echo "built: $OUT"

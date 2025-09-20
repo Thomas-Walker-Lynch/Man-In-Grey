@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# tester-authored custom environment (optional)
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  echo "$script_afp:: This script must be sourced, not executed."
+  exit 1
+fi
+
+# Normalize machine arch to our release dir names
+_arch_raw=$(uname -m | tr '[:upper:]' '[:lower:]')
+case "$_arch_raw" in
+  amd64|x64)       _arch="x86_64" ;;
+  x86_64)          _arch="x86_64" ;;
+  i386|i486|i586|i686) _arch="i686" ;;
+  arm64|aarch64)   _arch="aarch64" ;;
+  armv7l)          _arch="armv7l" ;;
+  armv6l)          _arch="armv6l" ;;
+  riscv64)         _arch="riscv64" ;;
+  ppc64le|powerpc64le) _arch="ppc64le" ;;
+  s390x)           _arch="s390x" ;;
+  *)               _arch="$_arch_raw" ;;
+esac
+export ARCH="$_arch"
+
+# Handy convenience paths (optional)
+export REL_SHELL="$RELEASE/shell"
+export REL_PY="$RELEASE/python3"
+export REL_ARCH="$RELEASE/$ARCH"

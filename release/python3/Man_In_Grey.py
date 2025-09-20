@@ -202,10 +202,12 @@ def _find_inner_py(repo_root: Path)-> Path|None:
   return cand if cand.is_file() else None
 
 def _apply_via_gasket(cbor_bytes: bytes ,apply_cmd: Path ,args)-> int:
-  cmd = [str(apply_cmd)]
+  cmd = [
+    str(apply_cmd)
+    ,"--plan" ,"-"   
+  ]
   if args.phase_2_print:      cmd.append("--phase-2-print")
   if args.phase_2_then_stop:  cmd.append("--phase-2-then-stop")
-  # fine-grained gates (optional pass-through if gasket proxies them)
   if args.phase_2_wellformed_then_stop: cmd.append("--phase-2-wellformed-then-stop")
   if args.phase_2_sanity1_then_stop:   cmd.append("--phase-2-sanity1-then-stop")
   if args.phase_2_validity_then_stop:  cmd.append("--phase-2-validity-then-stop")
@@ -319,14 +321,17 @@ def main(argv: list[str]|None=None)-> int:
     print(f"error: CBOR encode failed: {e}" ,file=sys.stderr)
     return 2
 
-  # Prefer gasket; else fall back to Python inner
+  # Always use the gasket under release/<arch>/man_in_grey_apply (or explicit --apply-cmd)
   apply_cmd = Path(args.apply_cmd).resolve() if args.apply_cmd else (_find_apply_cmd(repo_root) or None)
-  if apply_cmd:
-    try:
-      return _apply_via_gasket(cbor_bytes ,apply_cmd ,args)
-    except Exception as e:
-      print(f"error: apply-cmd failed: {e}" ,file=sys.stderr)
-      return 2
+  if not apply_cmd:
+    print("error: gasket not found; build/release first (release/<arch>/man_in_grey_apply)", file=sys.stderr)
+    return 2
+
+  try:
+    return _apply_via_gasket(cbor_bytes ,apply_cmd ,args)
+  except Exception as e:
+    print(f"error: apply-cmd failed: {e}" ,file=sys.stderr)
+    return 2
 
   inner_py = Path(args.inner_py).resolve() if args.inner_py else (_find_inner_py(repo_root) or None)
   if inner_py:

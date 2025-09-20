@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# discover repo root from here
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+TESTER_DIR="$(cd "$(dirname "$script_afp")/.." && pwd -P)"
+REPO_HOME="$(cd "$TESTER_DIR/.." && pwd -P)"
+
+ENTRY="$REL_SHELL/Man_In_Grey"
+GASKET="$REL_ARCH/man_in_grey_apply"
+
+# tester has a path to `release/shell`
+ENTRY="Man_In_Grey"
+
+# sanity
+[[ -x "$ENTRY" ]] || { echo "❌ missing entrypoint: $ENTRY (did you run developer/release?)" >&2; exit 2; }
+
+# ensure tester won’t hit privileged gasket refusal:
+ARCH_RAW=$(uname -m | tr '[:upper:]' '[:lower:]')
+case "$ARCH_RAW" in
+  amd64|x64) ARCH="x86_64" ;;
+  x86_64) ARCH="x86_64" ;;
+  i386|i486|i586|i686) ARCH="i686" ;;
+  arm64|aarch64) ARCH="aarch64" ;;
+  armv7l) ARCH="armv7l" ;;
+  armv6l) ARCH="armv6l" ;;
+  riscv64) ARCH="riscv64" ;;
+  ppc64le|powerpc64le) ARCH="ppc64le" ;;
+  s390x) ARCH="s390x" ;;
+  *) ARCH="$ARCH_RAW" ;;
+esac
+GASKET="$REPO_HOME/release/$ARCH/man_in_grey_apply"
+
+if [[ -x "$GASKET" && -u "$GASKET" ]]; then
+  echo "⚠️  Gasket is blessed (setuid-root) but tester is sudo-less."
+  echo "   Run:  sudo ./tool/unbless"
+  exit 1
+fi
+
+# fresh output dir
+rm -rf -- "$OUT"
+mkdir -p "$OUT"
+
+echo "▶️  Running Man_In_Grey on tester/$STAGE → $OUT"
+# Run planner → CBOR → apply (unprivileged). Default filter will be emitted in CWD if missing.
+( cd "$TESTER_DIR" && \
+  "$ENTRY" \
+    --stage "$STAGE" \
+    --phase-1-print \
+    --phase-2-print )
+
+echo "✅ Apply finished. Verifying…"
+
+fail=0
+
+# expected artifacts (from your sample stage)
+chk() {
+  local path="$1" desc="$2"
+  if [[ -f "$path" ]]; then
+    echo "  ✓ $desc ($path)"
+  else
+    echo "  ✗ $desc missing ($path)"; fail=1
+  fi
+}
+
+# files to expect
+chk "$OUT/unbound_conf"                "DNS base file"
+chk "$OUT/net/unbound.conf"            "DNS net override"
+chk "$OUT/web/nginx.conf"              "web nginx.conf"
+
+# content spot checks (adjust to your test content)
+if [[ -f "$OUT/net/unbound.conf" ]]; then
+  grep -q 'verbosity: 1' "$OUT/net/unbound.conf" \
+    && echo "  ✓ verbosity content OK" \
+    || { echo "  ✗ expected 'verbosity: 1' in net/unbound.conf"; fail=1; }
+fi
+
+if [[ -f "$OUT/web/nginx.conf" ]]; then
+  grep -q 'listen 8080' "$OUT/web/nginx.conf" \
+    && echo "  ✓ nginx listen OK" \
+    || { echo "  ✗ expected 'listen 8080' in web/nginx.conf"; fail=1; }
+fi
+
+# mode spot check (0444 example; chmod prints in octal differently across distros, use stat)
+if [[ -f "$OUT/unbound_conf" ]]; then
+  mode=$(stat -c '%a' "$OUT/unbound_conf" 2>/dev/null || stat -f '%Lp' "$OUT/unbound_conf")
+  [[ "$mode" == "444" ]] \
+    && echo "  ✓ mode unbound_conf is 0444" \
+    || { echo "  ⚠︎ mode unbound_conf is $mode (expected 444)"; :; }
+fi
+
+[[ $fail -eq 0 ]] && echo "🎉 test_0 PASS" || { echo "❌ test_0 FAIL"; exit 1; }

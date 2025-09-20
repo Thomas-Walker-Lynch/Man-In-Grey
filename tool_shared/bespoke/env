@@ -7,6 +7,7 @@ fi
 
 # without this bash takes non-matching globs literally
 shopt -s nullglob
+umask 022
 
 # --------------------------------------------------------------------------------
 # project definition

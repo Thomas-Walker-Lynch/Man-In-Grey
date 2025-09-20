@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+REPO_HOME="$(CDPATH= cd -- "$SELF_DIR/.." && pwd)"
+
+if [[ $EUID -ne 0 ]]; then
+  echo "must be run as root (sudo)"; exit 1
+fi
+
+raw="$(uname -m | tr '[:upper:]' '[:lower:]')"
+case "$raw" in
+  amd64|x64) arch="x86_64" ;; x86_64) arch="x86_64" ;;
+  i386|i486|i586|i686) arch="i686" ;;
+  arm64|aarch64) arch="aarch64" ;;
+  armv7l) arch="armv7l" ;; armv6l) arch="armv6l" ;;
+  riscv64) arch="riscv64" ;; ppc64le|powerpc64le) arch="ppc64le" ;;
+  s390x) arch="s390x" ;; *) arch="$raw" ;;
+esac
+
+GASKET="${REPO_HOME}/release/${arch}/man_in_grey_apply"
+[[ -e "$GASKET" ]] || { echo "not found: $GASKET"; exit 2; }
+
+# default target owner to the user who owns REPO_HOME
+OWNER="$(stat -c '%U' "$REPO_HOME")"
+GROUP="$(stat -c '%G' "$REPO_HOME")"
+
+chmod 0755 "$GASKET"
+chown "$OWNER:$GROUP" "$GASKET"
+echo "unblessed: $GASKET"
+ls -l "$GASKET"

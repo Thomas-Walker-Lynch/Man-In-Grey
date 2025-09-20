@@ -2,71 +2,59 @@
 # developer/tool/release — stage current build into ../release (no privilege changes)
 set -euo pipefail
 
-# Resolve repo root from this script’s location: $REPO_HOME/developer/tool/release
-SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-REPO_HOME="$(CDPATH= cd -- "$SELF_DIR/../.." && pwd)"
-REL_DIR="${REPO_HOME}/release"
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+REPO_HOME="$(cd "$(dirname "$script_afp")/../.." && pwd -P)"
 
-# Normalize arch (matches Man_In_Grey.py/Man_In_Grey wrapper)
-raw="$(uname -m | tr '[:upper:]' '[:lower:]')"
-case "$raw" in
-  amd64|x64) arch="x86_64" ;;
-  x86_64)    arch="x86_64" ;;
-  i386|i486|i586|i686) arch="i686" ;;
-  arm64|aarch64) arch="aarch64" ;;
-  armv7l)    arch="armv7l" ;;
-  armv6l)    arch="armv6l" ;;
-  riscv64)   arch="riscv64" ;;
-  ppc64le|powerpc64le) arch="ppc64le" ;;
-  s390x)     arch="s390x" ;;
-  *)         arch="$raw" ;;
+# --- arch normalize (same mapping as orchestrator/wrapper) ---
+arch_raw=$(uname -m | tr '[:upper:]' '[:lower:]')
+case "$arch_raw" in
+  amd64|x64)                 arch="x86_64" ;;
+  x86_64)                    arch="x86_64" ;;
+  i386|i486|i586|i686)       arch="i686" ;;
+  arm64|aarch64)             arch="aarch64" ;;
+  armv7l)                    arch="armv7l" ;;
+  armv6l)                    arch="armv6l" ;;
+  riscv64)                   arch="riscv64" ;;
+  ppc64le|powerpc64le)       arch="ppc64le" ;;
+  s390x)                     arch="s390x" ;;
+  *)                         arch="$arch_raw" ;;
 esac
 
-# Locations
-BUILD_DIR="${REPO_HOME}/developer/build/${arch}"
+# --- inputs/outputs ---
 SRC_DIR="${REPO_HOME}/developer/source"
+MACHINE_DIR="${REPO_HOME}/developer/machine/${arch}"
 
-DEST_ARCH_DIR="${REL_DIR}/${arch}"
-DEST_PY_DIR="${REL_DIR}/python3"
-DEST_SH_DIR="${REL_DIR}/shell"
+REL_DIR="${REPO_HOME}/release"
+REL_ARCH="${REL_DIR}/${arch}"
+REL_PY="${REL_DIR}/python3"
+REL_SH="${REL_DIR}/shell"
 
-# Inputs
-GASKET_SRC="${BUILD_DIR}/man_in_grey_apply"
+GASKET_SRC="${MACHINE_DIR}/man_in_grey_apply"
 PY_ORCH_SRC="${SRC_DIR}/Man_In_Grey.py"
 PY_INNER_SRC="${SRC_DIR}/executor_inner.py"
 PY_PLANNER_SRC="${SRC_DIR}/Planner.py"
-WRAP_SRC="${SRC_DIR}/Man_In_Grey"   # shell wrapper
+WRAP_SRC="${SRC_DIR}/Man_In_Grey"   # shell entrypoint
 
-# Sanity
-[[ -f "$PY_ORCH_SRC" ]]    || { echo "error: missing $PY_ORCH_SRC" >&2; exit 2; }
-[[ -f "$PY_INNER_SRC" ]]   || { echo "error: missing $PY_INNER_SRC" >&2; exit 2; }
-[[ -f "$PY_PLANNER_SRC" ]] || { echo "error: missing $PY_PLANNER_SRC" >&2; exit 2; }
-[[ -f "$WRAP_SRC" ]]       || { echo "error: missing $WRAP_SRC (shell wrapper)" >&2; exit 2; }
+# --- sanity checks ---
+[[ -x "$GASKET_SRC" ]]     || { echo "error: missing gasket for ${arch}: $GASKET_SRC (run: compile)"; exit 2; }
+[[ -f "$PY_ORCH_SRC" ]]    || { echo "error: missing $PY_ORCH_SRC"; exit 2; }
+[[ -f "$PY_INNER_SRC" ]]   || { echo "error: missing $PY_INNER_SRC"; exit 2; }
+[[ -f "$PY_PLANNER_SRC" ]] || { echo "error: missing $PY_PLANNER_SRC"; exit 2; }
+[[ -f "$WRAP_SRC" ]]       || { echo "error: missing $WRAP_SRC (shell wrapper)"; exit 2; }
 
-# Gasket is optional for unprivileged testing; warn if not present
-if [[ ! -x "$GASKET_SRC" ]]; then
-  echo "warn: gasket not found for arch ${arch}: $GASKET_SRC"
-  echo "      (unprivileged apply will fall back to python inner)"
-fi
+# --- create destinations ---
+mkdir -p "$REL_ARCH" "$REL_PY" "$REL_SH"
 
-# Create dest dirs
-mkdir -p "$DEST_ARCH_DIR" "$DEST_PY_DIR" "$DEST_SH_DIR"
+# --- stage artifacts (no ownership or setuid flips here) ---
+install -m 0755 "$GASKET_SRC"     "${REL_ARCH}/man_in_grey_apply"
 
-# Stage Python bits
-install -m 0755 "$PY_ORCH_SRC"    "$DEST_PY_DIR/Man_In_Grey.py"
-install -m 0755 "$PY_INNER_SRC"   "$DEST_PY_DIR/executor_inner.py"
-install -m 0644 "$PY_PLANNER_SRC" "$DEST_PY_DIR/Planner.py"
+install -m 0755 "$PY_ORCH_SRC"    "${REL_PY}/Man_In_Grey.py"
+install -m 0755 "$PY_INNER_SRC"   "${REL_PY}/executor_inner.py"
+install -m 0644 "$PY_PLANNER_SRC" "${REL_PY}/Planner.py"
 
-# Stage wrapper
-install -m 0755 "$WRAP_SRC" "$DEST_SH_DIR/Man_In_Grey"
+install -m 0755 "$WRAP_SRC"       "${REL_SH}/Man_In_Grey"
 
-# Stage gasket (no setuid/owner changes here)
-if [[ -x "$GASKET_SRC" ]]; then
-  install -m 0755 "$GASKET_SRC" "$DEST_ARCH_DIR/man_in_grey_apply"
-fi
-
-echo "release staged to: $REL_DIR"
-echo "  arch : $arch"
-echo "  py   : $(realpath "$DEST_PY_DIR")"
-echo "  shell: $(realpath "$DEST_SH_DIR")"
-[[ -x "$GASKET_SRC" ]] && echo "  gasket: $(realpath "$DEST_ARCH_DIR/man_in_grey_apply")"
+echo "released to: ${REL_DIR}"
+echo "  arch : ${REL_ARCH}/man_in_grey_apply"
+echo "  py   : ${REL_PY}/"
+echo "  shell: ${REL_SH}/Man_In_Grey"

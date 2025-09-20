@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+REPO_HOME="$(cd "$(dirname "$script_afp")/.." && pwd -P)"
+
+if [[ $EUID -ne 0 ]]; then
+  echo "must be run as root (sudo)"; exit 1
+fi
+
+arch_raw=$(uname -m | tr '[:upper:]' '[:lower:]')
+case "$arch_raw" in
+  amd64|x64) arch="x86_64" ;;
+  x86_64)    arch="x86_64" ;;
+  i386|i486|i586|i686) arch="i686" ;;
+  arm64|aarch64) arch="aarch64" ;;
+  armv7l)    arch="armv7l" ;;
+  armv6l)    arch="armv6l" ;;
+  riscv64)   arch="riscv64" ;;
+  ppc64le|powerpc64le) arch="ppc64le" ;;
+  s390x)     arch="s390x" ;;
+  *)         arch="$arch_raw" ;;
+esac
+
+GASKET="${REPO_HOME}/release/${arch}/man_in_grey_apply"
+if [[ ! -x "$GASKET" ]]; then
+  echo "gasket missing: $GASKET (run developer/tool/release first)"; exit 2
+fi
+
+chown root:root "$GASKET"
+chmod 4755 "$GASKET"
+
+echo "blessed: $GASKET"
+ls -l "$GASKET"
+echo "flags:"
+"$GASKET" --print-flags || true

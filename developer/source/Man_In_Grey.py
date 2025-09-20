@@ -202,10 +202,12 @@ def _find_inner_py(repo_root: Path)-> Path|None:
   return cand if cand.is_file() else None
 
 def _apply_via_gasket(cbor_bytes: bytes ,apply_cmd: Path ,args)-> int:
-  cmd = [str(apply_cmd)]
+  cmd = [
+    str(apply_cmd)
+    ,"--plan" ,"-"   
+  ]
   if args.phase_2_print:      cmd.append("--phase-2-print")
   if args.phase_2_then_stop:  cmd.append("--phase-2-then-stop")
-  # fine-grained gates (optional pass-through if gasket proxies them)
   if args.phase_2_wellformed_then_stop: cmd.append("--phase-2-wellformed-then-stop")
   if args.phase_2_sanity1_then_stop:   cmd.append("--phase-2-sanity1-then-stop")
   if args.phase_2_validity_then_stop:  cmd.append("--phase-2-validity-then-stop")
