@@ -1,0 +1,12 @@
+2025-09-20 16:21:44Z [Man_In_Grey:tester]
+
+A system administrator keeps authoritative config files in an directory.  When setting up or changing the configuration of a system he wanted to automate the process of installing the config files.
+
+Man_In_Grey performs the task of automating config file installs.
+
+It passes a small test in user space.
+
+The "blessing" step remains untested. The code architect requests that the executor_outer.py be ported to C.
+
+It is a relative small program, that is needed for the project that inspired it, so I will release version 1 for that project.
+
