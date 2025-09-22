@@ -34,6 +34,7 @@ PY_ORCH_SRC="${SRC_DIR}/Man_In_Grey.py"
 PY_INNER_SRC="${SRC_DIR}/executor_inner.py"
 PY_PLANNER_SRC="${SRC_DIR}/Planner.py"
 WRAP_SRC="${SRC_DIR}/Man_In_Grey"   # shell entrypoint
+DIAG_PERM="${SRC_DIR}/diag_perm"
 
 # --- sanity checks ---
 [[ -x "$GASKET_SRC" ]]     || { echo "error: missing gasket for ${arch}: $GASKET_SRC (run: compile)"; exit 2; }
@@ -53,6 +54,8 @@ install -m 0755 "$PY_INNER_SRC"   "${REL_PY}/executor_inner.py"
 install -m 0644 "$PY_PLANNER_SRC" "${REL_PY}/Planner.py"
 
 install -m 0755 "$WRAP_SRC"       "${REL_SH}/Man_In_Grey"
+install -m 0755 "$DIAG_PERM"      "${REL_SH}/Man_In_Grey"
+
 
 echo "released to: ${REL_DIR}"
 echo "  arch : ${REL_ARCH}/man_in_grey_apply"
