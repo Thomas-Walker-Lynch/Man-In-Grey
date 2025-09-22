@@ -1,110 +1,62 @@
 #!/usr/bin/env bash
-# Diagnose Man_In_Grey privilege flow: user → gasket (setuid) → python inner
+# man_in_grey — canonical entrypoint for Man_In_Grey
+# - Resolves repo → release dirs
+# - Requires the privileged gasket (single code path)
+# - Always invokes the Python orchestrator with --apply-cmd <gasket>
 set -euo pipefail
 
-# --- locate repo root (best effort) ---
-script_afp="$(realpath "${BASH_SOURCE[0]}")"
-REPO_HOME="$(cd "$(dirname "$script_afp")/.." && pwd -P 2>/dev/null || pwd -P)"
+# --- resolve this script’s absolute path (portable) ---
+_this="${BASH_SOURCE[0]:-$0}"
 
-# --- arch normalizer (same mapping we use elsewhere) ---
-_arch_raw=$(uname -m | tr '[:upper:]' '[:lower:]')
+if command -v realpath >/dev/null 2>&1; then
+  _this_abs="$(realpath -- "$_this")"
+else
+  if _tmp="$(readlink -f -- "$_this" 2>/dev/null)"; then
+    _this_abs="${_tmp}"
+  else
+    _dir="$(cd "$(dirname -- "$_this")" && pwd -P)"
+    _base="$(basename -- "$_this")"
+    _this_abs="${_dir}/${_base}"
+  fi
+fi
+
+_shell_dir="$(cd "$(dirname -- "$_this_abs")" && pwd -P)"   # .../release/shell
+_release_dir="$(cd "${_shell_dir}/.." && pwd -P)"           # .../release
+_repo_root="$(cd "${_release_dir}/.." && pwd -P)"           # repo root
+
+# --- orchestrator path (prefer released copy) ---
+_py_release="${_release_dir}/python3/Man_In_Grey.py"
+_py_dev="${_repo_root}/developer/source/Man_In_Grey.py"
+if [[ -f "$_py_release" ]]; then
+  _py_entry="$_py_release"
+elif [[ -f "$_py_dev" ]]; then
+  _py_entry="$_py_dev"
+else
+  echo "error: Man_In_Grey.py not found in release/python3/ or developer/source/" >&2
+  exit 2
+fi
+
+# --- arch normalize (uname -m → release/<arch>) ---
+_arch_raw="$(uname -m | tr '[:upper:]' '[:lower:]')"
 case "$_arch_raw" in
-  amd64|x64) _arch="x86_64" ;;
-  x86_64)    _arch="x86_64" ;;
-  i386|i486|i586|i686) _arch="i686" ;;
-  arm64|aarch64) _arch="aarch64" ;;
-  armv7l)    _arch="armv7l" ;;
-  armv6l)    _arch="armv6l" ;;
-  riscv64)   _arch="riscv64" ;;
-  ppc64le|powerpc64le) _arch="ppc64le" ;;
-  s390x)     _arch="s390x" ;;
-  *)         _arch="$_arch_raw" ;;
+  amd64|x64)               _arch="x86_64" ;;
+  x86_64)                  _arch="x86_64" ;;
+  i386|i486|i586|i686)     _arch="i686"   ;;
+  arm64|aarch64)           _arch="aarch64";;
+  armv7l)                  _arch="armv7l" ;;
+  armv6l)                  _arch="armv6l" ;;
+  riscv64)                 _arch="riscv64";;
+  ppc64le|powerpc64le)     _arch="ppc64le";;
+  s390x)                   _arch="s390x"  ;;
+  *)                       _arch="$_arch_raw" ;;
 esac
 
-# Allow overriding via env/args
-REL_BASE="${REPO_HOME}/tool_shared/third_party/Man_In_Grey/release"
-REL_BASE="${REL_BASE:-${REPO_HOME}/release}"
-GASKET="${1:-${REL_BASE}/${_arch}/man_in_grey_apply}"
-WRAP="${2:-${REL_BASE}/shell/Man_In_Grey}"
-
-echo "== who/where =="
-echo "user: $(id -un) (uid=$(id -u))  groups: $(id -nG)"
-echo "pwd : $(pwd)"
-echo
-
-echo "== paths =="
-echo "wrapper: $WRAP"
-echo "gasket : $GASKET"
-echo
-
-echo "== wrapper sanity =="
-if [[ -x "$WRAP" ]]; then
-  head -n 1 "$WRAP" | sed 's/^/shebang: /'
-  echo "exec path: $(command -v "$WRAP" || echo '(not in PATH)')"
-else
-  echo "!! wrapper missing/non-exec"
-fi
-echo
-
-echo "== gasket file sanity =="
-if [[ -e "$GASKET" ]]; then
-  ls -l "$GASKET"
-  # setuid bit present?
-  if [[ -u "$GASKET" ]]; then echo "setuid: YES"; else echo "setuid: NO"; fi
-  # mount options
-  mp="$(dirname "$(readlink -f "$GASKET")")"
-  echo "mount: $(findmnt -no TARGET,FSTYPE,OPTIONS "$mp" 2>/dev/null || echo 'findmnt not available')"
-else
-  echo "!! gasket not found"
-fi
-echo
-
-echo "== gasket self-report (--print-flags) =="
-if [[ -x "$GASKET" ]]; then
-  "$GASKET" --print-flags || true
-else
-  echo "skip (no gasket)"
-fi
-echo
-
-echo "== python inner EUID test =="
-PYTEST="/tmp/mig_ids_$$.py"
-cat >"$PYTEST"<<'PY'
-import os, sys, grp, pwd
-u = os.getuid(); e = os.geteuid()
-name = pwd.getpwuid(u).pw_name if u>=0 else "?"
-print(f"py.real_uid={u} ({name})")
-print(f"py.effective_uid={e}")
-print("py.groups=", os.getgroups())
-sys.exit(0)
-PY
-chmod 0644 "$PYTEST"
-
-if [[ -x "$GASKET" ]]; then
-  echo "running: $GASKET --inner $PYTEST"
-  "$GASKET" --inner "$PYTEST" || true
-else
-  echo "skip (no gasket)"
-fi
-rm -f "$PYTEST"
-echo
-
-echo "== wrapper execution trace (dry) =="
-if [[ -x "$WRAP" ]]; then
-  echo "+ bash -x \"$WRAP\" --phase-2-sanity2-then-stop --stage dummy  (trace only)"
-  set +e
-  bash -x "$WRAP" --phase-2-sanity2-then-stop --stage dummy 1>/dev/null 2>&1 | sed 's/^/TRACE: /' || true
-  set -e
-else
-  echo "skip (no wrapper)"
+_gasket="${_release_dir}/${_arch}/man_in_grey_apply"
+if [[ ! -x "$_gasket" ]]; then
+  echo "error: gasket missing: ${_gasket}" >&2
+  echo "hint: from \$REPO_HOME/developer: run  compile  then  release" >&2
+  exit 2
 fi
 
-echo
-echo "== verdict (rules of thumb) =="
-cat <<'EOT'
-- If --print-flags shows "flag.this_process_privileged=0": the setuid bit is not taking effect (check mount nosuid, file perms, or wrong gasket path).
-- If --print-flags is 1 but python euid is 0: privileges are flowing OK; problems are likely in the shell wrapper bypassing the gasket.
-- If --print-flags is 1 but python euid is NOT 0: something is stripping EUID across exec (rare: no_new_privs or an LSM). Check `grep NoNewPrivs /proc/$$/status` from the caller shell and try running outside wrappers.
-- If wrapper trace never execs the gasket: fix the wrapper to always call the gasket.
-- If you are root and see a 'not in sudo' refusal: update gasket policy to allow root (special-case UID 0).
-EOT
+# --- run orchestrator (single code path via gasket) ---
+exec "${PYTHON:-python3}" "$_py_entry" --apply-cmd "$_gasket" "$@"

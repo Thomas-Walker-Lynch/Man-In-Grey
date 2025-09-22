@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+# vl 'vertical list'
+
+# Check if the command is provided
+if [ -z "$1" ]; then
+  echo "Usage: vl <command> [args...]"
+  exit 1
+fi
+
+# Capture the command and its arguments
+cmd=$1
+shift
+
+# Run the command with the remaining arguments and replace colons or spaces with newlines
+"$cmd" "$@" | tr ' :' '\n'
+
+exit 0
