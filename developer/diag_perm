@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Diagnose Man_In_Grey privilege flow: user -> setuid gasket -> python inner
+set -euo pipefail
+
+# --- locate release base from this script's real path ---
+_this="$(readlink -f "$0")"
+_shell_dir="$(cd -- "$(dirname -- "$_this")" && pwd -P)"   # .../release/shell
+_relbase="$(dirname "$_shell_dir")"                        # .../release
+
+# --- arch normalize ---
+_arch_raw=$(uname -m | tr '[:upper:]' '[:lower:]')
+case "$_arch_raw" in
+  amd64|x64)       _arch="x86_64" ;;
+  x86_64)          _arch="x86_64" ;;
+  i386|i486|i586|i686) _arch="i686" ;;
+  arm64|aarch64)   _arch="aarch64" ;;
+  armv7l)          _arch="armv7l" ;;
+  armv6l)          _arch="armv6l" ;;
+  riscv64)         _arch="riscv64" ;;
+  ppc64le|powerpc64le) _arch="ppc64le" ;;
+  s390x)           _arch="s390x" ;;
+  *)               _arch="$_arch_raw" ;;
+esac
+
+# Allow explicit overrides via args
+GASKET="${1:-"${_relbase}/${_arch}/man_in_grey_apply"}"
+WRAP="${2:-"${_relbase}/shell/Man_In_Grey"}"
+
+echo "== who/where =="
+echo "user: $(id -un) (uid=$(id -u))  groups: $(id -nG)"
+echo "pwd : $(pwd)"
+echo
+
+echo "== paths =="
+echo "wrapper: $WRAP"
+echo "gasket : $GASKET"
+echo
+
+echo "== wrapper sanity =="
+if [[ -x "$WRAP" ]]; then
+  head -n 1 "$WRAP" | sed 's/^/shebang: /'
+  echo "exec path: $(command -v "$WRAP" || echo '(not in PATH)')"
+else
+  echo "!! wrapper missing/non-exec"
+fi
+echo
+
+echo "== gasket file sanity =="
+if [[ -e "$GASKET" ]]; then
+  ls -l "$GASKET"
+  if [[ -u "$GASKET" ]]; then echo "setuid: YES"; else echo "setuid: NO"; fi
+  mp="$(dirname "$(readlink -f "$GASKET")")"
+  echo "mount: $(findmnt -no TARGET,FSTYPE,OPTIONS "$mp" 2>/dev/null || echo 'findmnt not available')"
+else
+  echo "!! gasket not found"
+fi
+echo
+
+echo "== gasket self-report (--print-flags) =="
+if [[ -x "$GASKET" ]]; then
+  "$GASKET" --print-flags || true
+else
+  echo "skip (no gasket)"
+fi
+echo
+
+echo "== python inner EUID test =="
+PYTEST="/tmp/mig_ids_$$.py"
+cat >"$PYTEST"<<'PY'
+import os, pwd
+u = os.getuid(); e = os.geteuid()
+name = pwd.getpwuid(u).pw_name if u>=0 else "?"
+print(f"py.real_uid={u} ({name})")
+print(f"py.effective_uid={e}")
+print("py.groups=", os.getgroups())
+PY
+chmod 0644 "$PYTEST"
+
+if [[ -x "$GASKET" ]]; then
+  echo "running: $GASKET --inner $PYTEST"
+  "$GASKET" --inner "$PYTEST" || true
+else
+  echo "skip (no gasket)"
+fi
+rm -f "$PYTEST"
+echo
+
+echo "== wrapper execution trace (dry) =="
+if [[ -x "$WRAP" ]]; then
+  echo "+ bash -x \"$WRAP\" --phase-2-sanity2-then-stop --stage dummy  (trace only)"
+  set +e
+  bash -x "$WRAP" --phase-2-sanity2-then-stop --stage dummy 1>/dev/null 2>&1 | sed 's/^/TRACE: /' || true
+  set -e
+else
+  echo "skip (no wrapper)"
+fi
+
+echo
+echo "== verdict (rules of thumb) =="
+cat <<'EOT'
+- If --print-flags shows flag.this_process_privileged=0: setuid isn’t taking effect (check nosuid mount, bit not set, or wrong binary).
+- If that flag is 1 and the Python test shows euid=0: privileges flow is OK; if you still get EPERM to /etc, the wrapper may bypass the gasket sometimes.
+- If the wrapper trace never execs the gasket: replace the wrapper so it always runs the gasket.
+- If root is refused for “not in sudo”, update gasket policy to allow UID 0 (you already have that patch).
+EOT
