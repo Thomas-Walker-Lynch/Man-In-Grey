@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+
+"""
+new-project
+
+This administrative tool instantiates a fresh project workspace modeled after
+the Harmony skeleton architecture.
+
+The script executes the following sequential lifecycle:
+  1. Validates the execution environment (requires an active role session).
+  2. Checks the git status of the skeleton. The new project is made from the
+     last commit, so uncommitted changes and untracked files would be left
+     out. When there are any, lists them and asks whether to continue.
+  3. Safely extracts a clean copy of all Git-tracked files using an archive stream.
+  4. Renames the boilerplate 0pus_Harmony anchor file to reflect the new project.
+  5. Injects an initial version tracking entry into the shared configuration space.
+  6. Initializes a fresh Git repository bound to the core-developer_branch.
+  7. Stages and commits the pristine skeleton infrastructure as a baseline.
+  8. Maps any upstream remote network targets passed via CLI parameters.
+"""
+
+import sys ,os ,subprocess
+from pathlib import Path
+
+def get_Z_date() -> str:
+  """Retrieves the current date utilizing the system Z timestamp tool."""
+  try:
+    res = subprocess.run(["Z" ,"format-%year-%month-%day"] ,capture_output=True ,text=True ,check=True)
+    return res.stdout.strip()
+  except Exception:
+    return "1970-01-01"
+
+def uncommitted(repo_path: Path) -> list[str] | None:
+  """Returns the lines of 'git status --porcelain' for the skeleton: one per
+  file with uncommitted changes or untracked. None when git cannot report."""
+  try:
+    res = subprocess.run(
+      ["git" ,"status" ,"--porcelain" ,"--untracked-files=normal"]
+      ,cwd=str(repo_path) ,capture_output=True ,text=True ,check=True
+    )
+  except Exception:
+    return None
+  return [line for line in res.stdout.splitlines() if line.strip()]
+
+def confirm(question: str) -> bool:
+  """Asks a yes or no question at the terminal. Without a terminal to ask
+  at, the answer is no."""
+  if not sys.stdin.isatty():
+    return False
+  try:
+    answer = input(question + " [y/N] ")
+  except EOFError:
+    return False
+  return answer.strip().lower() in ("y" ,"yes")
+
+def work(repo_path: Path ,project_name: str ,remotes: list[str]) -> int:
+  """Orchestrates the assembly of the new skeleton instance."""
+  
+  # Resolve destination relative to the parent space of the current repository
+  dest_path = Path(project_name)
+  if not dest_path.is_absolute():
+    dest_path = (repo_path.parent / project_name).resolve()
+
+  if dest_path.exists():
+    print(f"Error: Destination {dest_path} already exists." ,file=sys.stderr)
+    return 1
+
+  print(f"Making new project at: {dest_path}")
+  dest_path.mkdir(parents=True)
+  
+  # Export tracked files without duplicating untracked scratchpads or git histories
+  archive_cmd = "git archive HEAD | tar -x -C " + str(dest_path)
+  res = subprocess.run(archive_cmd ,shell=True ,cwd=str(repo_path))
+  if res.returncode != 0:
+    print("Error extracting archive." ,file=sys.stderr)
+    return 1
+
+  # Personalize the project baseline anchor file
+  opus_src = dest_path / "0pus_Harmony"
+  opus_dst = dest_path / f"0pus_{dest_path.name}"
+  if opus_src.exists():
+    opus_src.rename(opus_dst)
+
+  # Record the lineage in the shared version history
+  version_file = dest_path / "shared" / "tool" / "version"
+  date_str = get_Z_date()
+  version_line = f"echo \"{dest_path.name} v0.1 {date_str}\"\n"
+  
+  if version_file.exists():
+    with open(version_file ,"a" ,encoding="utf-8") as vf:
+      vf.write(version_line)
+  else:
+    with open(version_file ,"w" ,encoding="utf-8") as vf:
+      vf.write(version_line)
+
+  # Initialize the pristine Git environment tracking system
+  print("Initializing git repository...")
+  subprocess.run(["git" ,"init" ,"-b" ,"core-developer_branch"] ,cwd=str(dest_path) ,check=True)
+  subprocess.run(["git" ,"add" ,"."] ,cwd=str(dest_path) ,check=True)
+  subprocess.run(["git" ,"commit" ,"-m" ,f"Initial commit of {dest_path.name} from Harmony skeleton"] ,cwd=str(dest_path) ,check=True)
+
+  # Configure tracking addresses for upstreams
+  for idx ,remote_url in enumerate(remotes):
+    remote_name = f"remote_{idx}"
+    if "github.com" in remote_url: 
+      remote_name = "github"
+    elif "RT" in remote_url: 
+      remote_name = "RT"
+    elif idx == 0:
+      remote_name = "origin"
+    
+    print(f"Adding remote '{remote_name}': {remote_url}")
+    subprocess.run(["git" ,"remote" ,"add" ,remote_name ,remote_url] ,cwd=str(dest_path) ,check=True)
+
+  print(f"Project '{dest_path.name}' successfully made.")
+  return 0
+
+def CLI(argv=None) -> int:
+  """Parses user input tokens from the shell execution frame."""
+  if argv is None:
+    argv = sys.argv[1:]
+
+  if not argv or "-h" in argv or "--help" in argv:
+    print("Usage: new-project <name> [-remote <url>]...")
+    return 0
+
+  project_name = None
+  remotes = []
+  
+  idx = 0
+  while idx < len(argv):
+    arg = argv[idx]
+    if arg == "-remote":
+      if idx + 1 < len(argv):
+        remotes.append(argv[idx+1])
+        idx += 1
+      else:
+        print("Error: -remote requires a URL." ,file=sys.stderr)
+        return 1
+    elif project_name is None:
+      project_name = arg
+    else:
+      print(f"Error: unexpected argument '{arg}'" ,file=sys.stderr)
+      return 1
+    idx += 1
+
+  if not project_name:
+    print("Error: project name is required." ,file=sys.stderr)
+    return 1
+
+  repo_home = os.environ.get("REPO_HOME")
+  if not repo_home:
+    print("Error: REPO_HOME is not set. A person must run this from within a sourced role environment." ,file=sys.stderr)
+    return 1
+  repo_path = Path(repo_home).resolve()
+
+  status = uncommitted(repo_path)
+  if status is None:
+    print(f"Error: could not read the git status of {repo_path}." ,file=sys.stderr)
+    return 1
+  if status:
+    shown = status[:20]
+    print(f"Warning: {repo_path} has {len(status)} uncommitted or untracked file(s):")
+    for line in shown:
+      print("  " + line)
+    if len(status) > len(shown):
+      print(f"  ... and {len(status) - len(shown)} more (see 'git status')")
+    print("The new project is made from the last commit, so these will not be in it.")
+    if not confirm("Continue anyway?"):
+      print("Stopped. Nothing was made. Commit or stash the changes, then run new-project again.")
+      return 1
+
+  return work(repo_path ,project_name ,remotes)
+
+if __name__ == "__main__":
+  sys.exit(CLI())

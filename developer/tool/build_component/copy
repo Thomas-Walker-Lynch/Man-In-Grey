@@ -1,0 +1,59 @@
+#!/usr/bin/env -S python3 -B
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+# developer/tool/build_component/copy
+
+import sys
+import os
+import shutil
+
+sys.path.insert(0, os.path.join(os.path.abspath("tool"), "build_component"))
+import sync_engine
+
+HELP = """usage: copy {all|clean|help}
+  all     Stages files from authored to scratchpad/made/<namespace>.
+  clean   Removes scratchpad/made/<namespace>.
+  help    Shows this message.
+"""
+
+def cmd_all():
+  namespace = os.environ.get("NAMESPACE")
+  namespace_dir = os.environ.get("NAMESPACE_DIR")
+
+  if not namespace or not namespace_dir:
+    print("copy: error: NAMESPACE and NAMESPACE_DIR environment variables must be set.", file=sys.stderr)
+    sys.exit(1)
+
+  src_root = os.path.join("authored", namespace_dir)
+  dst_root = os.path.join("scratchpad", "made", namespace)
+
+  sync_engine.execute_sync(src_root, dst_root, prefix="copy", apply_modes=False)
+
+def cmd_clean():
+  namespace = os.environ.get("NAMESPACE")
+  if not namespace:
+    print("copy: error: NAMESPACE environment variable must be set.", file=sys.stderr)
+    sys.exit(1)
+
+  dst_root = os.path.join("scratchpad", "made", namespace)
+  if os.path.exists(dst_root):
+    shutil.rmtree(dst_root)
+  print(f"copy: Cleaned {dst_root}")
+
+def CLI():
+  if len(sys.argv) < 2:
+    cmd = "all"
+  else:
+    cmd = sys.argv[1]
+
+  if cmd == "all":
+    cmd_all()
+  elif cmd == "clean":
+    cmd_clean()
+  elif cmd in ["help", "-h", "--help"]:
+    print(HELP)
+  else:
+    print(f"copy: Unrecognized command '{cmd}'", file=sys.stderr)
+    sys.exit(1)
+
+if __name__ == "__main__":
+  CLI()

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>File and directory naming conventions</title>
+    <script>
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
+    </script>
+  </head>
+  <body>
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title 
+        author="RT" 
+        date="2026-03-09" 
+        title="File and directory naming conventions">
+      </RT·title>
+
+      <RT·TOC level="1"></RT·TOC>
+
+      <h1>Program file system objects</h1>
+
+      <p>
+        Harmony files and directories are considered to be program file systems objects.
+      </p>
+
+      <h2>Files</h2>
+      <p>
+        Files that hold a single class, have he same base name as that class. If a file holds multiple classes, but there is a class of primary importance and auxiliary classes, the file carries the name of the primary class.
+      </p>
+
+      <p>
+        If a file represents a module or name space, follow the same naming conventions specified for classes and name spaces in the <RT·code>format_RT·code.html</RT·code> document.
+      </p>
+
+      <p>
+        Other program files follow the same naming conventions specified in the <RT·code>format_RT·code.html</RT·code> document for an identifier of the
+        contained or related language.
+      </p>
+
+      <h2>Hyphens and spaces</h2>
+
+      <p>In a C language culture, file names use underscores between words. In a Lisp language culture use snake-kebab_case. Spaces are generally not used in program file names. Though the Harmony skeleton is language agnostic, it was first used with C, hence file names use primarily underscores.
+      </p>
+
+
+      <h1>Program Directories</h1>
+      <p>
+        A directory that is a package, follows the convention for name spaces.
+      </p>
+
+      <p>
+        A directory that is used to give the contained files a property is an identifier.
+      </p>
+      
+      <p>
+        What is a reasonable primary property for a set of files? Perhaps:
+      </p>
+      <ul>
+        <li>Who uses each file with this property. Home directories are named like this.</li>
+        <li>The role of the people using the file. The <RT·code>developer</RT·code> and <RT·code>tester</RT·code> directories were named in this manner.</li>
+        <li>What program are the files for.</li>
+        <li>The generic category of program said files are for. We prefer the names <RT·code>authored</RT·code> and <RT·code>made</RT·code>. <RT·code>authored</RT·code> files are those written by humans or AI, while <RT·code>made</RT·code> files are products of tools.</li>
+      </ul>
+
+      <h1>Property indicators on files</h1>
+      <p>
+        We add a second property to a file using dot extensions to the file's name. We can extend the dot suffix model by using multiple dot suffixes. File name extensions are used to signal to the build tools how the file is to be processed:
+      </p>
+      <ul>
+        <li><RT·code>.cli.c</RT·code> : Compiler fodder made into a stand-alone executable.</li>
+        <li><RT·code>.lib.c</RT·code> : Library code source, compiled as an object file and added to the project archive.</li>
+        <li><RT·code>.mod.c</RT·code> : Kernel module sources.</li>
+      </ul>
+
+      <h1>Exercises</h1>
+      <h2>Exercise 1: Program file names</h2>
+      <p>
+        Rename the following poorly named files to strictly adhere to the RT naming conventions. Pay close attention to the language culture, the capitalization of acronyms, and the rule for spelling out abbreviations in outer scope identifiers.
+      </p>
+      <ul>
+        <li>A C-culture makefile that builds a target library and command line interface: <RT·code>target-lib-cli.mk</RT·code></li>
+        <li>A Lisp-culture source file for an HTML parsing module: <RT·code>html_parser_mod.el</RT·code></li>
+        <li>A C language source file that initializes an HTTP server: <RT·code>init-http-srv.c</RT·code></li>
+      </ul>
+
+    </RT·article>
+  </body>
+</html>

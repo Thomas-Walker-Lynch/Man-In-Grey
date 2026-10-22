@@ -1,0 +1,261 @@
+#!/usr/bin/env -S python3 -B
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+# developer/tool/promote
+
+import os
+import sys
+import shutil
+import stat
+import pwd
+import grp
+import filecmp
+
+# Calculate the path relative to this script's location
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Assumes this script is in developer/tool/
+# sync_engine is in developer/tool/build_component
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "build_component"))
+import sync_engine
+
+HELP = """usage: promote {write|clean|ls|diff|help|dry write}
+  write       Copies what is staged in scratchpad/made into consumer. Only updates newer files.
+  clean       Remove all contents of the consumer directory (preserves .gitignore).
+  ls          List consumer as an indented tree: PERMS  OWNER  NAME.
+  diff        List missing, orphaned, or out of sync files between scratchpad/made and consumer.
+  help        Show this message.
+  dry write   Preview what write would do without modifying the filesystem.
+
+Promoted files are read-only: 400, or 500 when executable. Directories below
+consumer/ are 500, so not even the owner can add, replace or remove a file in
+them; write and clean open them (700) for the duration and lock them again.
+consumer/ itself stays 700, as it holds the .gitignore git manages.
+"""
+
+SETUP_MUST_BE = "developer/tool/setup"
+DEFAULT_DIR_MODE = 0o700
+LOCKED_DIR_MODE = 0o500
+
+def exit_with_status(msg, code=1):
+  print(f"promote: {msg}", file=sys.stderr)
+  sys.exit(code)
+
+def assert_setup():
+  setup_val = os.environ.get("SETUP", "")
+  if setup_val != SETUP_MUST_BE:
+    hint = (
+      "SETUP is not 'developer/tool/setup'.\n"
+      "Enter the developer role with:  ./setup developer\n"
+      "That script exports: ROLE=developer; SETUP=$ROLE/tool/setup"
+    )
+    exit_with_status(f"bad environment: SETUP='{setup_val}'. {hint}")
+
+def repo_home():
+  rh = os.environ.get("REPO_HOME")
+  if not rh:
+    exit_with_status("REPO_HOME not set")
+  return rh
+
+def dpath(*parts):
+  return os.path.join(repo_home(), "developer", *parts)
+
+def cpath(*parts):
+  return os.path.join(repo_home(), "consumer", *parts)
+
+def ensure_mode(path_str, mode):
+  try: os.chmod(path_str, mode)
+  except Exception: pass
+
+def ensure_dir(path_str, mode=DEFAULT_DIR_MODE, dry=False):
+  if dry:
+    return
+  os.makedirs(path_str, exist_ok=True)
+  ensure_mode(path_str, mode)
+
+def consumer_subdirs(root_dp):
+  """Every directory below root_dp; root_dp itself is not included."""
+  found = []
+  for TM_root, TM_dirs, TM_files in os.walk(root_dp):
+    for TM_d in TM_dirs:
+      found.append(os.path.join(TM_root, TM_d))
+  return found
+
+def set_subdir_modes(root_dp, mode):
+  for TM_d in consumer_subdirs(root_dp):
+    ensure_mode(TM_d, mode)
+
+def filemode(m):
+  try: return stat.filemode(m)
+  except Exception: return oct(m & 0o777)
+
+def owner_group(st):
+  try: return f"{pwd.getpwuid(st.st_uid).pw_name}:{grp.getgrgid(st.st_gid).gr_name}"
+  except Exception: return f"{st.st_uid}:{st.st_gid}"
+
+def list_tree(root_dp):
+  if not os.path.isdir(root_dp):
+    return
+  
+  entries = []
+  def gather(path_str, depth, is_root):
+    try:
+      it = list(os.scandir(path_str))
+    except FileNotFoundError:
+      return
+    dirs = [TM_e for TM_e in it if TM_e.is_dir(follow_symlinks=False)]
+    files = [TM_e for TM_e in it if not TM_e.is_dir(follow_symlinks=False)]
+    dirs.sort(key=lambda TM_e: TM_e.name)
+    files.sort(key=lambda TM_e: TM_e.name)
+
+    if is_root:
+      for TM_f in (TM_e for TM_e in files if TM_e.name.startswith(".")):
+        st = os.lstat(TM_f.path)
+        entries.append((False, depth, filemode(st.st_mode), owner_group(st), TM_f.name))
+      for TM_d in dirs:
+        st = os.lstat(TM_d.path)
+        entries.append((True, depth, filemode(st.st_mode), owner_group(st), TM_d.name + "/"))
+        gather(TM_d.path, depth + 1, False)
+      for TM_f in (TM_e for TM_e in files if not TM_e.name.startswith(".")):
+        st = os.lstat(TM_f.path)
+        entries.append((False, depth, filemode(st.st_mode), owner_group(st), TM_f.name))
+    else:
+      for TM_d in dirs:
+        st = os.lstat(TM_d.path)
+        entries.append((True, depth, filemode(st.st_mode), owner_group(st), TM_d.name + "/"))
+        gather(TM_d.path, depth + 1, False)
+      for TM_f in files:
+        st = os.lstat(TM_f.path)
+        entries.append((False, depth, filemode(st.st_mode), owner_group(st), TM_f.name))
+
+  gather(root_dp, 1, True)
+
+  ogw = 0
+  for TM_isdir, TM_depth, TM_perms, TM_ownergrp, TM_name in entries:
+    if len(TM_ownergrp) > ogw:
+      ogw = len(TM_ownergrp)
+
+  print("consumer/")
+  for TM_isdir, TM_depth, TM_perms, TM_ownergrp, TM_name in entries:
+    indent = "  " * TM_depth
+    print(f"{TM_perms}  {TM_ownergrp:<{ogw}}  {indent}{TM_name}")
+
+def cmd_write(dry=False):
+  dst_root = cpath()
+  ensure_dir(dst_root, DEFAULT_DIR_MODE, dry=dry)
+  src_root = dpath("scratchpad", "made")
+
+  # Files are replaced by writing a temporary file beside them and renaming
+  # it into place, which needs write permission on the directory.
+  if not dry: set_subdir_modes(dst_root, DEFAULT_DIR_MODE)
+  try:
+    sync_engine.execute_sync(
+      src_root,
+      dst_root,
+      prefix="promote",
+      dry=dry,
+      apply_modes=True,
+      ignore_list=[".gitignore"]
+    )
+  finally:
+    if not dry: set_subdir_modes(dst_root, LOCKED_DIR_MODE)
+
+def cmd_diff():
+  dst_root = cpath()
+  src_root = dpath("scratchpad", "made")
+
+  src_files = set()
+  if os.path.isdir(src_root):
+    for TM_root, TM_dirs, TM_files in os.walk(src_root):
+      for TM_fn in TM_files:
+        if TM_fn == ".gitignore":
+          continue
+        src_files.add(os.path.relpath(os.path.join(TM_root, TM_fn), src_root))
+
+  dst_files = set()
+  if os.path.isdir(dst_root):
+    for TM_root, TM_dirs, TM_files in os.walk(dst_root):
+      for TM_fn in TM_files:
+        if TM_fn == ".gitignore":
+          continue
+        dst_files.add(os.path.relpath(os.path.join(TM_root, TM_fn), dst_root))
+
+  if not src_files and not dst_files:
+    print("No differences found. Both directories are empty or missing.")
+    return
+
+  all_files = sorted(list(src_files | dst_files))
+  found_diff = False
+
+  for TM_rel in all_files:
+    if TM_rel not in dst_files:
+      print(f"Pending promotion (missing in consumer): {TM_rel}")
+      found_diff = True
+    elif TM_rel not in src_files:
+      print(f"Orphaned in consumer (missing in scratchpad/made): {TM_rel}")
+      found_diff = True
+    else:
+      src_abs = os.path.join(src_root, TM_rel)
+      dst_abs = os.path.join(dst_root, TM_rel)
+
+      if not filecmp.cmp(src_abs, dst_abs, shallow=False):
+        src_mtime = os.stat(src_abs).st_mtime
+        dst_mtime = os.stat(dst_abs).st_mtime
+
+        if src_mtime > dst_mtime:
+          print(f"Pending update (contents differ, newer in scratchpad/made): {TM_rel}")
+        else:
+          print(f"Contents differ (locally modified in consumer): {TM_rel}")
+        found_diff = True
+
+  if not found_diff:
+    print("No differences found. Consumer matches developer scratchpad/made.")
+
+def cmd_clean():
+  consumer_root_dir = cpath()
+  if not os.path.isdir(consumer_root_dir):
+    return
+  # Removing an entry needs write permission on the directory holding it.
+  set_subdir_modes(consumer_root_dir, DEFAULT_DIR_MODE)
+  for TM_name in os.listdir(consumer_root_dir):
+    if TM_name == ".gitignore":
+      continue
+    p = os.path.join(consumer_root_dir, TM_name)
+    if os.path.isdir(p) and not os.path.islink(p):
+      shutil.rmtree(p, ignore_errors=True)
+    else:
+      try: os.unlink(p)
+      except FileNotFoundError: pass
+
+def CLI():
+  assert_setup()
+  
+  repo_home = os.environ.get("REPO_HOME", ".")
+  dev_dir = os.path.join(repo_home, "developer")
+  os.chdir(dev_dir)
+
+  if len(sys.argv) < 2:
+    print(HELP)
+    return
+  
+  cmd = sys.argv[1]
+  args = sys.argv[2:]
+
+  if cmd == "write":
+    cmd_write(dry=False)
+  elif cmd == "clean":
+    cmd_clean()
+  elif cmd == "ls":
+    list_tree(cpath())
+  elif cmd == "diff":
+    cmd_diff()
+  elif cmd == "help":
+    print(HELP)
+  elif cmd == "dry":
+    if args and args[0] == "write":
+      cmd_write(dry=True)
+    else:
+      print(HELP)
+  else:
+    print(HELP)
+
+if __name__ == "__main__":
+  CLI()

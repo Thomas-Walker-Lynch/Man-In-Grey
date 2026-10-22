@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+"""
+replace_from_tar
+
+Makes directories hold exactly what a tar file holds. For each directory at
+the top of the tar file, such as SubU.copy/, the directory of the same name in
+the extract dir is brought to match: files the tar file has are written when
+they are new or differ, and files and directories it does not have are
+deleted. The extract dir is the directory 'tar -x' would be run in: the one
+that holds SubU.copy, not SubU.copy itself. It is the current directory unless
+given. Extracting a tar file over a directory only adds and overwrites, so
+a file that was removed from the tar file would otherwise stay behind.
+
+The tool deletes files. Checkpoint the project with git first, and run
+preview to read what it would do.
+
+Usage: replace_from_tar <command> [argument ...]
+       replace_from_tar preview <command> [argument ...]
+  help | -h | --help             print this message (also printed when given no arguments)
+  replace <tar file> [<extract dir>]
+                                 bring each directory at the top of the tar file,
+                                 in the extract dir, to match the tar file
+  preview <command>              print the log of what <command> would do, change nothing
+
+Example, run in developer/authored, which holds SubU.copy:
+  replace_from_tar preview replace SubU.copy.tar
+  replace_from_tar replace SubU.copy.tar
+"""
+
+import sys ,os ,tarfile
+from pathlib import Path, PurePosixPath
+
+TAG_WIDTH = 12
+
+
+class Log:
+  PREVIEW_TAG = {"made": "would make" ,"replaced": "would replace" ,"deleted": "would delete"}
+
+  def __init__(self ,preview):
+    self.preview = preview
+    self.count = {}
+    self.error_count = 0
+
+  def line(self ,tag ,subject ,reason=None):
+    self.count[tag] = self.count.get(tag ,0) + 1
+    if tag == "unchanged": return
+    shown = self.PREVIEW_TAG.get(tag ,tag) if self.preview else tag
+    print(f"  {shown:<{TAG_WIDTH + 2}}{subject}" + (f"  ({reason})" if reason else ""))
+
+  def error(self ,subject ,reason):
+    self.error_count += 1
+    print(f"  {'error':<{TAG_WIDTH + 2}}{subject}  ({reason})")
+
+  def summary(self):
+    print("summary:")
+    for tag ,what in (("made" ,"files") ,("replaced" ,"files") ,("deleted" ,"files and directories") ,("unchanged" ,"files")):
+      n = self.count.get(tag ,0)
+      verb = f"that would be {tag}" if self.preview and tag != "unchanged" else tag
+      print(f"  {n:>4}  {what} {verb}")
+    if self.error_count:
+      print(f"  {self.error_count:>4}  errors")
+    if self.preview:
+      print("preview only: nothing was changed.")
+    return 1 if self.error_count else 0
+
+
+def member_problem(member):
+  path = PurePosixPath(member.name)
+  if path.is_absolute() or ".." in path.parts:
+    return "an absolute path or '..'"
+  if len(path.parts) < 1:
+    return "an empty name"
+  if not (member.isfile() or member.isdir() or member.issym()):
+    return "neither a file, a directory nor a symbolic link"
+  if member.issym() and (PurePosixPath(member.linkname).is_absolute() or ".." in PurePosixPath(member.linkname).parts):
+    return "a symbolic link leaving its directory"
+  return None
+
+def replace(tar_path ,extract_dir ,log ,preview):
+  extract_dir = Path(extract_dir)
+  if not extract_dir.is_dir():
+    log.error(str(extract_dir) ,"not a directory"); return
+  with tarfile.open(tar_path) as tar:
+    member_list = tar.getmembers()
+    for m in member_list:
+      problem = member_problem(m)
+      if problem:
+        log.error(m.name ,f"refused: {problem}; nothing was changed"); return
+    top_set = sorted({PurePosixPath(m.name).parts[0] for m in member_list})
+    for top in top_set:
+      if any(PurePosixPath(m.name) == PurePosixPath(top) and not m.isdir() for m in member_list):
+        log.error(top ,"refused: the top of the tar file must hold directories; nothing was changed"); return
+      target = extract_dir / top
+      if target.is_symlink():
+        log.error(str(target) ,"refused: it is a symbolic link; nothing was changed"); return
+
+    wanted = {str(PurePosixPath(m.name)): m for m in member_list}
+
+    # ---- delete what the tar file does not have, deepest first
+    for top in top_set:
+      target = extract_dir / top
+      if not target.exists(): continue
+      for dirpath ,dirname_list ,filename_list in os.walk(target ,topdown=False ,followlinks=False):
+        for name in sorted(filename_list) + sorted(d for d in dirname_list if (Path(dirpath) / d).is_symlink()):
+          path = Path(dirpath) / name
+          key = str(PurePosixPath(path.relative_to(extract_dir)))
+          if key not in wanted or wanted[key].isdir():
+            if not preview: path.unlink()
+            log.line("deleted" ,key)
+        for name in sorted(d for d in dirname_list if not (Path(dirpath) / d).is_symlink()):
+          path = Path(dirpath) / name
+          key = str(PurePosixPath(path.relative_to(extract_dir)))
+          if key not in wanted:
+            if not preview:
+              if any(path.iterdir()):
+                log.error(key ,"not empty after its files were deleted"); continue
+              path.rmdir()
+            log.line("deleted" ,key + "/")
+
+    # ---- write what is new or differs
+    for m in sorted(member_list ,key=lambda m: m.name):
+      key = str(PurePosixPath(m.name))
+      path = extract_dir / key
+      if m.isdir():
+        if not path.is_dir():
+          if not preview: path.mkdir(parents=True ,exist_ok=True)
+          log.line("made" ,key + "/")
+        continue
+      if m.issym():
+        if path.is_symlink() and os.readlink(path) == m.linkname:
+          log.line("unchanged" ,key); continue
+        if not preview:
+          if path.is_symlink() or path.exists(): path.unlink()
+          path.parent.mkdir(parents=True ,exist_ok=True)
+          os.symlink(m.linkname ,path)
+        log.line("replaced" if path.is_symlink() else "made" ,key); continue
+      data = tar.extractfile(m).read()
+      mode = m.mode & 0o777
+      if path.is_file() and not path.is_symlink():
+        if path.read_bytes() == data and (path.stat().st_mode & 0o777) == mode:
+          log.line("unchanged" ,key); continue
+        tag = "replaced"
+      else:
+        tag = "made"
+      if not preview:
+        path.parent.mkdir(parents=True ,exist_ok=True)
+        if path.is_symlink(): path.unlink()
+        path.write_bytes(data)
+        os.chmod(path ,mode)
+      log.line(tag ,key)
+
+
+def print_help():
+  print(__doc__.strip())
+  return 0
+
+def CLI(argv=None):
+  if argv is None: argv = sys.argv[1:]
+  if not argv or argv[0] in ("help" ,"-h" ,"--help"): return print_help()
+  preview = argv[0] == "preview"
+  if preview: argv = argv[1:]
+  if not argv:
+    print("Error: 'preview' needs a command after it." ,file=sys.stderr)
+    return 1
+  command ,rest = argv[0] ,argv[1:]
+  if command == "replace" and len(rest) in (1 ,2):
+    if len(rest) == 1: rest = [rest[0] ,"."]
+    if not Path(rest[0]).is_file():
+      print(f"Error: no tar file at {rest[0]}." ,file=sys.stderr)
+      return 1
+    log = Log(preview)
+    print(f"replace_from_tar {'preview ' if preview else ''}replace {rest[0]}   in {os.path.abspath(rest[1])}")
+    replace(rest[0] ,rest[1] ,log ,preview)
+    return log.summary()
+  print(f"Error: unknown command or wrong arguments: '{command}'." ,file=sys.stderr)
+  print_help()
+  return 1
+
+
+if __name__ == "__main__":
+  sys.exit(CLI())

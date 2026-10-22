@@ -1,0 +1,225 @@
+#!/usr/bin/env -S python3 -B
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+
+import os, sys, shutil, stat, pwd, grp, subprocess
+
+HELP = """usage: scratchpad {ls|clear|help|make|write|size|find|lock|unlock} [ARGS]
+  ls               List scratchpad in an indented tree with perms and owner (quiet if missing).
+  clear            Remove all contents of scratchpad/ except top-level .gitignore.
+  clear NAME       Remove scratchpad/NAME only.
+  make [NAME]      Ensure scratchpad/ exists with .gitignore; with NAME, mkdir scratchpad/NAME.
+  write SRC [DST]  Copy file/dir SRC into scratchpad (to DST if given; parents created).
+  size             Print 'empty' if only .gitignore; else total bytes and item count.
+  find [OPTS...]   Run system 'find' rooted at scratchpad/ with OPTS (omit literal 'scratchpad').
+  lock PATH...     Attempt 'chattr +i' on given paths under scratchpad/ (no state kept).
+  unlock PATH...   Attempt 'chattr -i' on given paths under scratchpad/.
+
+Examples:
+  scratchpad make
+  scratchpad write ~/Downloads/test.tar.gz
+  scratchpad find -type f -mtime +30 -print   # files older than 30 days
+  scratchpad lock some/dir important.txt
+  scratchpad unlock some/dir important.txt
+"""
+
+CWD = os.getcwd()
+SP = os.path.join(CWD, "scratchpad")
+GITIGNORE = os.path.join(SP, ".gitignore")
+
+def have_sp() -> bool:
+  return os.path.isdir(SP)
+
+def ensure_sp():
+  os.makedirs(SP, exist_ok=True)
+  ensure_gitignore()
+
+def ensure_gitignore():
+  os.makedirs(SP, exist_ok=True)
+  if not os.path.isfile(GITIGNORE):
+    with open(GITIGNORE, "w", encoding="utf-8") as f:
+      f.write("*\n!.gitignore\n")
+
+def filemode(mode: int) -> str:
+  try:
+    return stat.filemode(mode)
+  except Exception:
+    return oct(mode & 0o777)
+
+def owner_group(st) -> str:
+  try:
+    return f"{pwd.getpwuid(st.st_uid).pw_name}:{grp.getgrgid(st.st_gid).gr_name}"
+  except Exception:
+    return f"{st.st_uid}:{st.st_gid}"
+
+def rel_depth(base: str, root: str) -> int:
+  rel = os.path.relpath(base, root)
+  return 0 if rel == "." else rel.count(os.sep) + 1
+
+def ls_tree(root: str) -> None:
+  if not have_sp():
+    return
+  print("scratchpad/")
+
+  def walk(path: str, indent: str, is_root: bool) -> None:
+    try:
+      it = list(os.scandir(path))
+    except FileNotFoundError:
+      return
+
+    dirs  = [e for e in it if e.is_dir(follow_symlinks=False)]
+    files = [e for e in it if not e.is_dir(follow_symlinks=False)]
+    dirs.sort(key=lambda e: e.name)
+    files.sort(key=lambda e: e.name)
+
+    if is_root:
+      # 1) root-level hidden files first
+      for f in (e for e in files if e.name.startswith(".")):
+        st = os.lstat(f.path)
+        print(f"{filemode(st.st_mode)}  {owner_group(st)}  {indent}{f.name}")
+      # 2) then directories (and recurse so children sit under the parent)
+      for d in dirs:
+        st = os.lstat(d.path)
+        print(f"{filemode(st.st_mode)}  {owner_group(st)}  {indent}{d.name}/")
+        walk(d.path, indent + '  ', False)
+      # 3) then non-hidden files
+      for f in (e for e in files if not e.name.startswith(".")):
+        st = os.lstat(f.path)
+        print(f"{filemode(st.st_mode)}  {owner_group(st)}  {indent}{f.name}")
+    else:
+      # subdirs: keep previous order (dirs first, then files; dotfiles naturally sort first)
+      for d in dirs:
+        st = os.lstat(d.path)
+        print(f"{filemode(st.st_mode)}  {owner_group(st)}  {indent}{d.name}/")
+        walk(d.path, indent + '  ', False)
+      for f in files:
+        st = os.lstat(f.path)
+        print(f"{filemode(st.st_mode)}  {owner_group(st)}  {indent}{f.name}")
+
+  walk(root, "  ", True)
+
+
+def clear_all() -> None:
+  if not have_sp():
+    return
+  for name in os.listdir(SP):
+    p = os.path.join(SP, name)
+    if name == ".gitignore" and os.path.isfile(p):
+      continue  # preserve only top-level .gitignore
+    if os.path.isdir(p) and not os.path.islink(p):
+      shutil.rmtree(p, ignore_errors=True)
+    else:
+      try: os.unlink(p)
+      except FileNotFoundError: pass
+
+def clear_subdir(sub: str) -> None:
+  if not have_sp():
+    return
+  target = os.path.normpath(os.path.join(SP, sub))
+  try:
+    if os.path.commonpath([SP]) != os.path.commonpath([SP, target]):
+      return
+  except Exception:
+    return
+  if os.path.isdir(target) and not os.path.islink(target):
+    shutil.rmtree(target, ignore_errors=True)
+
+def cmd_make(args):
+  ensure_sp()
+  if args:
+    os.makedirs(os.path.join(SP, args[0]), exist_ok=True)
+
+def cmd_write(args):
+  if len(args) < 1:
+    print(HELP); return
+  if not have_sp():
+    ensure_sp()
+  src = args[0]
+  dst = args[1] if len(args) >= 2 else (os.path.basename(src.rstrip(os.sep)) or "untitled")
+  dst_path = os.path.normpath(os.path.join(SP, dst))
+  try:
+    if os.path.commonpath([SP]) != os.path.commonpath([SP, dst_path]):
+      print("refusing to write outside scratchpad", file=sys.stderr); return
+  except Exception:
+    print("invalid destination", file=sys.stderr); return
+  os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+  if os.path.isdir(src):
+    if os.path.exists(dst_path):
+      shutil.rmtree(dst_path, ignore_errors=True)
+    shutil.copytree(src, dst_path, dirs_exist_ok=False)
+  else:
+    shutil.copy2(src, dst_path)
+
+def cmd_size():
+  if not have_sp():
+    return
+  names = os.listdir(SP)
+  if [n for n in names if n != ".gitignore"] == []:
+    print("empty"); return
+  total = 0; count = 0
+  for base, dirs, files in os.walk(SP):
+    for fn in files:
+      if fn == ".gitignore": 
+        continue
+      p = os.path.join(base, fn)
+      try:
+        total += os.path.getsize(p); count += 1
+      except OSError:
+        pass
+  print(f"bytes={total} items={count}")
+
+def cmd_find(args):
+  if not have_sp():
+    return
+  try:
+    subprocess.run(["find", SP] + args, check=False)
+  except FileNotFoundError:
+    print("find not available", file=sys.stderr)
+
+def cmd_chattr(flag: str, paths):
+  if not have_sp() or not paths:
+    return
+  try:
+    subprocess.run(["chattr", "-V"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+  except FileNotFoundError:
+    print("chattr not available; lock/unlock skipped", file=sys.stderr); return
+  for rel in paths:
+    target = os.path.normpath(os.path.join(SP, rel))
+    try:
+      if os.path.commonpath([SP]) != os.path.commonpath([SP, target]):
+        continue
+    except Exception:
+      continue
+    try:
+      subprocess.run(["chattr", flag, target], check=False)
+    except Exception:
+      pass
+
+def CLI():
+  if len(sys.argv) < 2:
+    print(HELP); return
+  cmd, *args = sys.argv[1:]
+  if cmd == "ls":
+    if have_sp(): ls_tree(SP)
+    else: return
+  elif cmd == "clear":
+    if len(args) >= 1: clear_subdir(args[0])
+    else: clear_all()
+  elif cmd == "help":
+    print(HELP)
+  elif cmd == "make":
+    cmd_make(args)
+  elif cmd == "write":
+    cmd_write(args)
+  elif cmd == "size":
+    cmd_size()
+  elif cmd == "find":
+    cmd_find(args)
+  elif cmd == "lock":
+    cmd_chattr("+i", args)
+  elif cmd == "unlock":
+    cmd_chattr("-i", args)
+  else:
+    print(HELP)
+
+if __name__ == "__main__":
+  CLI()

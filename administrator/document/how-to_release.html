@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Release howto</title>
+    <script>
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
+    </script>
+  </head>
+  <body>
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title 
+        author="Thomas Walker Lynch" 
+        date="2026-06-24" 
+        title="How to release a project">
+      </RT·title>
+
+      <RT·TOC level="1"></RT·TOC>
+
+      <h1>Prerequisites</h1>
+      <p>
+        A developer works in the developer branch of the project, and makes use of the <RT·code>build</RT·code> and <RT·code>promote</RT·code> tools to stage release candidates into the <RT·code>$REPO_HOME/consumer</RT·code> directory. The <RT·code>tester</RT·code> then validates the release candidate. This constitutes a cycle of work, developing, promoting candidates, testing, and then further developing. Once the project manager agrees this cycle is complete, the release flow moves to the next step.
+      </p>
+
+      <h1>Make the release branch</h1>
+      <p>
+        The <RT·term>administrator</RT·term> executes the release. Open a terminal. Enter the project workspace.
+      </p>
+      <RT·code>
+        > . setup administrator
+      </RT·code>
+
+      <p>
+        Switch to the core development branch. Ensure the local repository is current.
+      </p>
+      <RT·code>
+        > git checkout core-developer_branch
+        > git pull
+      </RT·code>
+
+      <p>
+        Make a new branch for the release. Use the major version number.
+      </p>
+      <RT·code>
+        > git checkout -b release_v&lt;major&gt;
+      </RT·code>
+
+      <h1>Issue management and patching</h1>
+      <p>
+        Only critical issues receive patches on a release branch. The product manager defines what is critical. If approved, the release team applies the fix directly to the existing <RT·code>release_v&lt;major&gt;</RT·code> branch.
+      </p>
+      <p>
+        The branch name <RT·code>release_v&lt;major&gt;</RT·code> remains static. The code on the branch is updated. The administrator advances the minor release number in the <RT·code>shared/tool/version</RT·code> file.
+      </p>
+      <p>
+        The administrator tags the new commit with the full version number, such as <RT·code>v&lt;major&gt;.&lt;minor&gt;</RT·code>. Minor versions are edits on the major release branch. They are visible to a person by running the version command.
+      </p>
+      <p>
+        The developer must ensure the fix is also ported to the <RT·code>core-developer_branch</RT·code>. This prevents the defect from reappearing in future major releases.
+      </p>
+
+      <h1>Tag and push</h1>
+      <p>
+        Tag the release with the exact version number.
+      </p>
+      <RT·code>
+        > git tag -a v&lt;major&gt;.&lt;minor&gt; -m "Release v&lt;major&gt;.&lt;minor&gt;"
+      </RT·code>
+
+      <p>
+        Push the branch to the remote repository. Push the tags.
+      </p>
+      <RT·code>
+        > git push origin release_v&lt;major&gt;
+        > git push origin --tags
+      </RT·code>
+
+      <h1>Repository default branch</h1>
+      <p>
+        Set the repository default branch to the new <RT·code>release_v&lt;major&gt;</RT·code> branch on the hosting platform. This ensures a person cloning or pulling the repository receives the most recent major release code by default.
+      </p>
+
+      <h1>Verification</h1>
+      <p>
+        Check the remote repository. Confirm the branch exists. Confirm the tag is visible. Confirm the default branch is updated.
+      </p>
+
+      <h1>Role responsibilities</h1>
+      <ul>
+        <li><strong>Administrator:</strong> Executes the release. Manages branches, tags, and remote pushes. Updates the version file. Sets the repository default branch.</li>
+        <li><strong>Developer:</strong> Compiles and promotes release candidates. Ports release branch fixes back to the core developer branch.</li>
+        <li><strong>Tester:</strong> Validates candidates. Writes a test for every issue in the core developer queue.</li>
+        <li><strong>Product Manager:</strong> Defines critical issues. Orders the release. Participates in release issue triage.</li>
+        <li><strong>Project Manager:</strong> Participates in release issue triage. Assesses impact to the overall project schedule.</li>
+      </ul>
+
+    </RT·article>
+  </body>
+</html>

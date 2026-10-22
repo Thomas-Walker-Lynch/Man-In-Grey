@@ -1,0 +1,71 @@
+#+TITLE: Python Installation Guide
+#+AUTHOR: Project Administrator
+
+This project requires a dedicated Python environment. The configuration plugin (`shared/project-dependency/Python.init`) was written targeting Python 3.12.3, though the architecture does not rely on any known version-dependent features.
+
+The build below can be moved. Nothing in it records the absolute directory it was built in where the interpreter depends on it, so the directory can move with a home directory, or to another machine, and keep working.
+
+* 1. Install the development libraries
+
+Python's configure step looks for the development files of each optional library, and silently leaves out any module whose library it does not find. A build without sqlite3-devel, for example, has no sqlite3 module, and the gap shows only when a program imports it. Install these first. The names are for openSUSE; zypper search finds the name of one that differs.
+
+#+begin_src bash
+sudo zypper install gcc make sqlite3-devel libopenssl-devel libffi-devel zlib-devel \
+  readline-devel ncurses-devel xz-devel libbz2-devel gdbm-devel tk-devel libuuid-devel
+#+end_src
+
+zlib-ng-compat-devel serves in place of zlib-devel, and the two conflict; if zypper reports that conflict, keep the one already installed.
+
+tk-devel gives the tkinter module, which the window programs use.
+
+* 2. Download and Extract
+Download the Python source code and extract it as a sibling to the main project directory. Assuming you are at the top level of your project workspace:
+
+#+begin_src bash
+cd ../
+wget https://www.python.org/ftp/python/3.12.3/Python-3.12.3.tgz
+tar -xzf Python-3.12.3.tgz
+cd Python-3.12.3
+#+end_src
+
+* 3. Build the Environment
+Compile the Python binaries in place. Setting the installation prefix to the current directory isolates the build.
+
+#+begin_src bash
+CONFIG_SITE= ./configure --prefix="$(pwd)" --libdir="$(pwd)/lib" --enable-optimizations
+make -j8 2>&1 | tee build.log
+make install
+#+end_src
+
+Everything installs inside this directory; nothing is written to the system.
+
+CONFIG_SITE= and --libdir keep the machine's own defaults out of the build, so the recipe gives the same layout on every Linux. Some distributions, openSUSE and Fedora among them, name a site file in CONFIG_SITE that sets the library directory to lib64 for every configure script. Python then installs its compiled modules under lib64 while the interpreter looks for them under lib, and every import of a compiled module, such as ssl, fails.
+
+The build is static: the interpreter is one program, with no separate libpython3.12.so to find when it starts. A build with --enable-shared records the absolute path of its library directory in the program, and stops working when the directory moves. C extension modules, such as those pip installs, work with the static build.
+
+Near the end of build.log, make lists any optional modules it could not build, under "The necessary bits to build these optional modules were not found". nis, an obsolete network directory service, and _curses_panel may appear there; the project uses neither. For any other module listed, install the missing development library and build again.
+
+* 4. Check the build
+
+#+begin_src bash
+bin/python3 -c 'import sys ,ssl ,sqlite3 ,ctypes ,lzma ,bz2 ,readline ,tkinter; print(sys.prefix)'
+ldd bin/python3 | grep libpython        # prints nothing: no shared libpython
+#+end_src
+
+* 5. Use pip through the interpreter
+
+The scripts make install writes into bin/, such as pip3, start with a #! line naming the absolute path of the interpreter, so they break when the directory moves. Run pip as a module instead, which uses whichever interpreter runs it:
+
+#+begin_src bash
+python3 -m pip install <package>
+#+end_src
+
+* 6. Link the Project
+
+Python-3.12.3 is linked to a Harmony derived project by default.
+
+See administrator/document/how-to_add-project-dependency.html for details about linking a project, if you want to check the setup.
+
+If you are installing a different version, then at least the Python-3.12.3 version project linking is there as a good example.
+
+Project linking is not difficult, make a sym link to `project/<dependency>`, and then add an init file, as described in administrator/document/how-to_add-project-dependency.html. The 'project' in the link is literal.

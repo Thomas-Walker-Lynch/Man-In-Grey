@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+# setup - enter a project role environment
+
+import os
+import sys
+import argparse
+import tempfile
+
+PROJECT_ROLES = ["administrator", "consumer", "developer", "tester"]
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Enter a project role environment by spawning an isolated subshell."
+    )
+    parser.add_argument("role", choices=PROJECT_ROLES, help="The project role to assume.")
+    args = parser.parse_args()
+
+    env = os.environ.copy()
+
+    # A role shell started inside another role shell inherits the outer
+    # project's PATH, REPO_HOME and functions, and a loop through setup would
+    # start shells without end. RT_SETUP_DEPTH counts the role shells this
+    # process is inside; any nesting is refused.
+    depth = env.get("RT_SETUP_DEPTH", "0")
+    depth = int(depth) if depth.isdigit() else 0
+    if depth > 0:
+        print(f"setup: already inside a role shell ({env.get('PROJECT', '?')} {env.get('ROLE', '?')}).")
+        print("setup: type 'exit' to leave it, then run setup again.")
+        sys.exit(1)
+    env["RT_SETUP_DEPTH"] = str(depth + 1)
+
+    # Python-domain logic: Variables and Paths
+    #   The project is the directory holding this file, whatever REPO_HOME the
+    #   calling shell carries; an inherited REPO_HOME may name another project.
+    repo_home = os.path.dirname(os.path.realpath(__file__))
+    role = args.role
+    role_home = os.path.join(repo_home, role)
+    tool_dir = os.path.join(role_home, "tool")
+    setup_file = os.path.join(role, "tool", "setup")
+
+    env["ROLE"] = role
+    env["ROLE_HOME"] = role_home
+    env["SETUP"] = setup_file
+
+    print(f"ROLE_HOME {role_home}")
+
+    # Python-domain logic: Directory validation
+    if not os.path.isdir(role_home):
+        print(f"setup: failed to locate directory for role '{role}'")
+        sys.exit(1)
+
+    # Bash-domain logic: The rcfile only handles operations Python cannot inherit 
+    # (sourcing bash functions) and performs the directory change internally to 
+    # guarantee the shared scripts are sourced from the project root.
+    bash_logic = [
+        'if [[ -f ~/.bashrc ]]; then source ~/.bashrc; fi',
+        'if [[ -f "shared/tool/setup" ]]; then source "shared/tool/setup"; fi',
+        'if [[ -f "shared/authored/setup" ]]; then source "shared/authored/setup"; fi',
+        '# the role tool directory is searched before everything the shared setup added',
+        f'PATH="{tool_dir}:$PATH"; export PATH',
+        f'cd "{role}"',
+        'if [[ -f "tool/setup" ]]; then',
+        '    source "tool/setup"',
+        f'    echo "in environment: {setup_file}"',
+        'else',
+        f'    echo "not found: {setup_file}"',
+        'fi',
+        'if [[ -n "${INSIDE_EMACS}" ]] && command -v env_to_emacs >/dev/null 2>&1; then',
+        '    env_to_emacs',
+        'fi',
+        'rm -f "${BASH_SOURCE[0]}"'
+    ]
+
+    fd, rcfile_path = tempfile.mkstemp(suffix="-rt-setup.sh")
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(bash_logic) + "\n")
+
+    os.chdir(repo_home)
+    os.execvpe("bash", ["bash", "--rcfile", rcfile_path], env)
+
+if __name__ == "__main__":
+    main()

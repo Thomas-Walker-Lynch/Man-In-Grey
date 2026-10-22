@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Product maintenance roles and workflow</title>
+    <script>
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
+    </script>
+  </head>
+  <body>
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title 
+        author="Thomas Walker Lynch" 
+        date="2026-03-10" 
+        title="Product maintenance roles and workflow">
+      </RT·title>
+
+      <RT·TOC level="1"></RT·TOC>
+
+      <h1>Maintenance philosophy</h1>
+      <p>
+        Deployed software must be a usable quality product for the customer, beyond that we favor addressing issues in new releases, and encourage customers who are having issues to upgrade. This approach is purely one of keeping the maintenance problem tractable.
+      </p>
+
+      <h1>Maintenance structure</h1>
+      <p>
+        Teams mentioned in this document:
+      </p>
+      <ol>
+        <li>tester team</li>
+        <li>core developer team</li>
+        <li>branch maintenance team</li>
+        <li>triage team</li>
+      </ol>
+
+      <p>
+        Team membership is a role a person takes on. Multiple people can share a single role, and one person might take on multiple roles.
+      </p>
+
+      <p>
+        The tester team develops and maintains the <RT·term>regression suite</RT·term>, the <RT·term>reliability suite</RT·term>, and <RT·term>additional tests</RT·term>.
+      </p>
+
+      <p>
+        The core developer team writes the source code and compiles promotion candidates.
+      </p>
+
+      <p>
+        The branch maintenance team is typically a subset of the core developer team. This group is dedicated to applying approved fixes to specific release branches.
+      </p>
+
+      <p>
+        The triage team evaluates defects reported against active releases. The team usually includes a developer contact, the project manager, and the product manager.
+      </p>
+
+      <h1>Issue queues</h1>
+      <p>
+        The project maintains two primary issue queues:
+      </p>
+      <ol>
+        <li>released product</li>
+        <li>core developer</li>
+      </ol>
+
+      <p>
+        There can be additional queues for multiple branches of development, and for experiments.
+      </p>
+
+      <h2>Core developer queue</h2>
+      <p>
+        This queue serves the <RT·code>core_developer_branch</RT·code>. A <RT·term>tester</RT·term> writes a test for every issue reported in this queue. Doing so isolates the defect, proves the fix, and guards against future regressions.
+      </p>
+
+      <h2>Released product queue</h2>
+      <p>
+        All issues found in release branches go onto this queue initially. It tracks defects reported against deployed software across any major version. 
+      </p>
+
+      <h1>Triage and patching</h1>
+      <p>
+        Guided by the project philosophy, the triage team reviews each release queue issue to determine its impact. The team assesses whether the defect affects the <RT·code>core_developer_branch</RT·code>, assuming by default that it probably does. The team also determines if the defect is critical enough to warrant a patch on one or more active release branches.
+      </p>
+      <p>
+        Based on this assessment, the triage team files actionable tickets in the core developer queue. A ticket explicitly specifies its target branches. A ticket will be filed against either the core developer branch, specific release branches, or a combination of both.
+      </p>
+      <p>
+        Members of the tester team also file tickets directly into the core developer queue when they discover defects in the core branch.
+      </p>
+      <p>
+        Responsibility for resolving a ticket depends on its target. The core developer team addresses fixes required on the <RT·code>core_developer_branch</RT·code>. The branch maintenance team addresses fixes required on the <RT·code>release_v&lt;major&gt;</RT·code> branches.
+      </p>
+      <p>
+        When a release is patched, the branch name remains static. The administrator advances the minor release number in the <RT·code>shared/tool/version</RT·code> file and tags the commit.
+      </p>
+
+    </RT·article>
+  </body>
+</html>

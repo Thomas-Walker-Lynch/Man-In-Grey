@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+"""
+html_update_to_3-1
+
+Replaces specific StyleRT script blocks with RT 3.1 loader blocks using
+literal string replacement.
+"""
+
+import sys ,os
+
+OLD_BLOCK = \
+"""    <script src="setup.js"></script>
+    <script>
+      window.StyleRT.include('RT/theme');
+      window.StyleRT.include('RT/layout/article_tech_ref');
+    </script>"""
+
+NEW_BLOCK = \
+"""    <script>
+      window.RT = window.RT || {};
+      window.RT.dirpr_library = "RT";
+      document.write('<script src="' + window.RT.dirpr_library + '/core/loader.js"></' + 'script>');
+    </script>
+    <script>
+      window.RT.load('core/utility');
+      window.RT.load('core/block_visibility_during_layout');
+      window.RT.load('theme');
+      window.RT.load('layout/article_tech_ref');
+    </script>"""
+
+def process_file(file_path: str) -> None:
+  try:
+    with open(file_path ,"r" ,encoding="utf-8") as f:
+      content = f.read()
+  except Exception as e:
+    print(f"Error reading {file_path}: {e}" ,file=sys.stderr)
+    return
+    
+  # Normalize line endings to ensure a match across environments
+  normalized_content = content.replace("\r\n" ,"\n")
+  normalized_old = OLD_BLOCK.replace("\r\n" ,"\n")
+  
+  if( normalized_old in normalized_content ):
+    new_content = normalized_content.replace(normalized_old ,NEW_BLOCK)
+    with open(file_path ,"w" ,encoding="utf-8") as f:
+      f.write(new_content)
+    print(f"Updated: {file_path}")
+  else:
+    print(f"Target lines not found in: {file_path}")
+
+def CLI() -> None:
+  args = sys.argv[1:]
+  
+  if( not args or "-h" in args or "--help" in args ):
+    print("Usage: html_update_to_3-1 <file.html...>")
+    sys.exit(0)
+    
+  for TM_f in args:
+    process_file(TM_f)
+
+if __name__ == "__main__":
+  CLI()

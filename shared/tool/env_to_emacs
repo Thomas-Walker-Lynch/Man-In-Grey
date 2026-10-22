@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# env_to_emacs - give the Emacs shell buffer this setup runs in the role's environment
+#
+# Emacs starts programs (compile, grep, and the like) with its own copy of the
+# environment, which a shell running inside it cannot change. This tool sets
+# REPO_HOME, PROJECT, ROLE and PATH in Emacs, and exec-path to match, for the
+# one shell buffer whose shell this setup runs under, and for no other.
+#
+# The values are buffer-local. Killing the buffer discards them, and other
+# buffers, including shells started later, keep Emacs's own environment. (An
+# earlier version set them globally, so every shell started afterward began
+# in the last role set up, even after that role's buffer was gone.)
+#
+# The buffer is found by process: Emacs knows the process id of the shell in
+# each shell buffer, and that shell is an ancestor of this script, perhaps
+# several generations up, since setup starts a new bash under the buffer's own.
+
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+
+set -euo pipefail
+
+if [ -z "${REPO_HOME:-}" ]; then
+  echo "env_to_emacs: error: REPO_HOME is not set. Source a setup environment first."
+  exit 1
+fi
+
+if ! command -v emacsclient >/dev/null 2>&1; then
+  echo "env_to_emacs: error: emacsclient is not installed or not in PATH."
+  exit 1
+fi
+
+# quote a value as an Emacs Lisp string
+elisp_string(){
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  printf '"%s"' "$s"
+}
+
+form=$(cat <<EOF
+(let* ((pid $PPID)
+       (buffer nil))
+  ;; walk up from this script's parent to the shell process of some buffer
+  (while (and pid (> pid 1) (not buffer))
+    (setq buffer
+          (seq-find (lambda (b)
+                      (let ((p (get-buffer-process b)))
+                        (and p (eql (process-id p) pid))))
+                    (buffer-list)))
+    (unless buffer
+      (setq pid (alist-get 'ppid (process-attributes pid)))))
+  (if (not buffer)
+      "no shell buffer found"
+    (with-current-buffer buffer
+      (setq-local process-environment (copy-sequence process-environment))
+      (setenv "REPO_HOME" $(elisp_string "$REPO_HOME"))
+      (setenv "PROJECT" $(elisp_string "${PROJECT:-}"))
+      (setenv "ROLE" $(elisp_string "${ROLE:-}"))
+      (setenv "PATH" $(elisp_string "$PATH"))
+      (setq-local exec-path (append (parse-colon-path $(elisp_string "$PATH")) (list exec-directory)))
+      (buffer-name))))
+EOF
+)
+
+if ! result=$(emacsclient --eval "$form" 2>&1); then
+  echo "env_to_emacs: cannot reach the Emacs server; Emacs environment left unchanged"
+  echo "  $result"
+  exit 0
+fi
+result=${result#\"}
+result=${result%\"}
+
+if [[ "$result" == "no shell buffer found" ]]; then
+  echo "env_to_emacs: no Emacs shell buffer runs this shell; Emacs environment left unchanged"
+  exit 0
+fi
+
+echo "Emacs buffer $result has the environment of $PROJECT ${ROLE:-}"

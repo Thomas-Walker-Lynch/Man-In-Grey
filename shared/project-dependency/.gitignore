@@ -1,0 +1,11 @@
+# shared/project-dependency/.gitignore
+# Tracks the skeleton's parts. Add a ! line for anything else to track,
+# such as a dependency's link.
+*
+!.gitignore
+!project
+!*.init
+!*.install
+!*.org
+!*.html
+!Python-3.12.3

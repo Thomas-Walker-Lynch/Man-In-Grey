@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Introduction to Harmony</title>
+    <script>
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
+    </script>
+  </head>
+  <body>
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title
+        author="Thomas Walker Lynch"
+        date="2026-10-09"
+        title="Introduction to Harmony">
+      </RT·title>
+
+      <RT·TOC level="1"></RT·TOC>
+
+      <h1>Purpose</h1>
+      <p>
+        Harmony is a project skeleton: a language-agnostic directory structure and a set of maintenance tools, kept in a git repository, from which new projects are made. It is designed for long-lived software developed by a team, and serves equally well for one person, who takes on each role in turn. The structure exists to give:
+      </p>
+      <ol>
+        <li>Clarity about where things live.
+          <ul>
+            <li>Role-based work areas.</li>
+            <li>Separation of skeleton, team member authored, machine-made, and depended-upon software.</li>
+          </ul>
+        </li>
+        <li>A safe, predictable build and promotion workflow.</li>
+      </ol>
+
+      <h1>Making a project</h1>
+      <p>
+        A project administrator makes a new project from a clone of Harmony, by taking on the administrator role and running <RT·code>new-project</RT·code> with the name of the new project:
+      </p>
+      <RT·code>
+        > cd Harmony
+        > ./setup administrator
+        > new-project &lt;name&gt;
+      </RT·code>
+      <p>
+        <RT·code>new-project</RT·code> makes the new project as a sibling directory of Harmony, then:
+      </p>
+      <ol>
+        <li>Copies the files of Harmony's last commit, leaving out Harmony's git history, untracked files, and uncommitted changes.</li>
+        <li>Renames <RT·code>0pus_Harmony</RT·code> to <RT·code>0pus_&lt;name&gt;</RT·code>.</li>
+        <li>Adds a line for the new project to <RT·code>shared/tool/version</RT·code>.</li>
+        <li>Initializes a git repository on the <RT·code>core-developer_branch</RT·code> branch, and commits the copied skeleton.</li>
+        <li>Adds any remote repositories given as <RT·code>-remote &lt;url&gt;</RT·code>.</li>
+      </ol>
+      <p>
+        Because the new project starts with its own git history, work done in it cannot be checked in to the Harmony skeleton by accident.
+      </p>
+      <p>
+        Leave the Harmony line in the version file. It records which skeleton the project was made from, so that an administrator can later see what has changed in the skeleton since, and bring the project up to date. The administrator tool <RT·code>skeleton_diff</RT·code> compares a project with a Harmony checkout for this purpose.
+      </p>
+
+      <h1>Taking on a role</h1>
+      <p>
+        A person works in a project by taking on a <RT·term>role</RT·term>. The roles are <RT·code>administrator</RT·code>, <RT·code>developer</RT·code>, <RT·code>tester</RT·code>, and <RT·code>consumer</RT·code>. From the top directory of the project, run <RT·code>setup</RT·code> with the role:
+      </p>
+      <RT·code>
+        > ./setup developer
+      </RT·code>
+      <p>
+        <RT·code>setup</RT·code> starts a new bash shell configured for the role, and leaves the person in the role's directory. The prompt shows the project and the role. <RT·code>exit</RT·code> leaves the role and returns to the shell <RT·code>setup</RT·code> was run from. It is common to have several terminal windows or Emacs shells open, each in a different role.
+      </p>
+      <p>
+        Python programmers will recognize this as similar to a virtual environment. Harmony calls it the project setup, and the command is <RT·code>setup</RT·code> rather than <RT·code>activate</RT·code>. Unlike a Python virtual environment, there is one setup for each role.
+      </p>
+      <p>
+        In the new shell, the setup:
+      </p>
+      <ul>
+        <li>Sets <RT·code>ROLE</RT·code>, <RT·code>ROLE_HOME</RT·code> and <RT·code>SETUP</RT·code>, and puts <RT·code>&lt;role&gt;/tool</RT·code> on the <RT·code>PATH</RT·code>.</li>
+        <li>Sources the project-wide <RT·code>shared/tool/setup</RT·code>, which sets <RT·code>REPO_HOME</RT·code> and <RT·code>PROJECT</RT·code>, puts <RT·code>shared/tool</RT·code> and <RT·code>shared/authored</RT·code> on the <RT·code>PATH</RT·code>, and sources each project dependency's <RT·code>.init</RT·code> file.</li>
+        <li>Sources <RT·code>shared/authored/setup</RT·code>, when the project has one, for project-specific additions to every role.</li>
+        <li>Changes into the role's directory and sources <RT·code>&lt;role&gt;/tool/setup</RT·code>, the setup customized for that role in this project.</li>
+        <li>When running inside Emacs, copies the environment to Emacs with <RT·code>env_to_emacs</RT·code>.</li>
+      </ul>
+      <p>
+        Tools rely on this environment. Absolute paths are formed from <RT·code>REPO_HOME</RT·code>, and some tools, such as <RT·code>build</RT·code> and <RT·code>promote</RT·code>, refuse to run outside the role they belong to.
+      </p>
+
+      <h1>Roles and their directories</h1>
+      <p>
+        Each role has a directory at the top of the project. The <RT·code>shared</RT·code> directory holds what all roles use.
+      </p>
+
+      <h2>Administrator</h2>
+      <p>
+        The administrator keeps the project in step with the Harmony skeleton, maintains the role environments, installs project dependencies, and makes releases. <RT·code>administrator/tool</RT·code> holds the tools for this, among them <RT·code>new-project</RT·code>, <RT·code>skeleton_diff</RT·code>, and <RT·code>archive</RT·code>, which writes an archive of the repository to the scratchpad.
+      </p>
+
+      <h2>Developer</h2>
+      <p>
+        The developer writes the project's source and builds it.
+      </p>
+      <ul>
+        <li><RT·code>authored/</RT·code> : Source written by the team. Tracked.</li>
+        <li><RT·code>document/</RT·code> : Documents for developers, such as coding and naming conventions.</li>
+        <li><RT·code>experiment/</RT·code> : Informal, short-lived trials.</li>
+        <li><RT·code>scratchpad/</RT·code> : Untracked. Intermediate build files and the staged products of a build.</li>
+        <li><RT·code>tool/</RT·code> : The developer's tools, including <RT·code>build</RT·code> and <RT·code>promote</RT·code>.</li>
+      </ul>
+
+      <h2>Tester</h2>
+      <p>
+        The tester holds the formal tests, including regression suites, and runs them against the work product in <RT·code>consumer/</RT·code>. A developer may keep informal tests in <RT·code>developer/experiment</RT·code>. A test that is to be kept is moved to <RT·code>tester/</RT·code>, which keeps writing code and validating it apart.
+      </p>
+
+      <h2>Consumer</h2>
+      <p>
+        <RT·code>consumer/</RT·code> receives the work product when a developer promotes it. It is untracked, apart from its <RT·code>.gitignore</RT·code>, and is treated as a deployment target: files arrive there only through <RT·code>promote</RT·code>, and nothing is built in it. The consumer role uses the work product as its end users would.
+      </p>
+
+      <h2>Shared</h2>
+      <ul>
+        <li><RT·code>shared/tool/</RT·code> : Tools for all roles, and the project-wide setup. The <RT·code>version</RT·code> command prints the version lines.</li>
+        <li><RT·code>shared/authored/</RT·code> : Project-specific additions for all roles. It is on every role's <RT·code>PATH</RT·code>, and may hold a <RT·code>setup</RT·code> that every role sources.</li>
+        <li><RT·code>shared/project-dependency/</RT·code> : Software the project uses but did not author. See "Project dependencies" below.</li>
+      </ul>
+
+      <h1>Building and promoting</h1>
+      <p>
+        Building and promotion are separate steps. In the developer role, <RT·code>build</RT·code> makes the work product from <RT·code>developer/authored</RT·code> and stages it on the developer's scratchpad. <RT·code>promote write</RT·code> then copies what changed to <RT·code>consumer/</RT·code>. The result is a <RT·term>promotion candidate</RT·term>, which stays as it is until the next promotion.
+      </p>
+      <p>
+        Source in <RT·code>developer/authored</RT·code> is grouped into directories named <RT·code>&lt;Namespace&gt;.&lt;Tool&gt;</RT·code>. The suffix names the build component in <RT·code>developer/tool/build_component</RT·code> that builds that directory, such as <RT·code>make</RT·code> for C, or <RT·code>copy</RT·code> for files used as they are. Given no arguments, <RT·code>build</RT·code> prints its usage and the namespaces it found. <RT·code>promote</RT·code> given no arguments prints its commands, among them <RT·code>dry write</RT·code>, which shows what <RT·code>write</RT·code> would copy.
+      </p>
+      <p>
+        The tester runs tests against the promotion candidate. Tests read from <RT·code>consumer/</RT·code> and never write to it, though a tester may copy files elsewhere to experiment with them. A developer often has a second window open in the tester role, and cycles through edit, build, promote and test.
+      </p>
+
+      <h2>After cloning a project</h2>
+      <p>
+        Built products are not tracked, so a fresh clone has an empty <RT·code>consumer/</RT·code>. A team member who needs the work product builds it, taking on the developer role to do so:
+      </p>
+      <RT·code>
+        > ./setup developer
+        > build &lt;namespace&gt;
+        > promote write
+        > exit
+        > ./setup &lt;role&gt;
+      </RT·code>
+      <p>
+        The developer documents any project-specific build steps in <RT·code>developer/document/build.html</RT·code>. A fresh clone also lacks the project's dependencies, which each team member installs as described beside each dependency in <RT·code>shared/project-dependency</RT·code>.
+      </p>
+
+      <h1>Project dependencies</h1>
+      <p>
+        Harmony is language agnostic. When a project uses C, Python, NodeJS, Java, or other software it did not author, the administrator installs that software as a sibling directory of the project and links it in under <RT·code>shared/project-dependency</RT·code>, with an <RT·code>.init</RT·code> file that every role's setup sources to put the dependency into the environment. Installation notes for each dependency sit beside its <RT·code>.init</RT·code> file, so that each team member can repeat the installation after cloning.
+      </p>
+      <p>
+        The directory comes with a <RT·code>project</RT·code> link to the directory holding the project and its siblings, through which dependencies are linked, and with Python as an example dependency. The steps are given in <RT·code>administrator/document/how-to_add-project-dependency.html</RT·code>.
+      </p>
+
+      <h1>Directory names</h1>
+      <p>
+        A directory name is a <RT·term>property</RT·term> of each file in the directory, so a full path reads as a description of the file. Because a name states a property of each file, it is rarely plural: when every file in a directory is a test, the directory is named <RT·code>test</RT·code>.
+      </p>
+      <p>
+        A conventional file system can only approximate a property-based one. Each file sits in one directory, so it receives one property per level of the path. Files sharing several properties can be given a compound name with the properties separated by an underscore, but overlapping groupings cannot be expressed.
+      </p>
+      <p>
+        When choosing a directory name, prefer properties in this order:
+      </p>
+      <ul>
+        <li><strong>Role</strong> (<RT·code>administrator</RT·code>, <RT·code>developer</RT·code>, <RT·code>tester</RT·code>, <RT·code>consumer</RT·code>): the role, human or AI, that works with the files.</li>
+        <li><strong>Provenance</strong> (<RT·code>authored</RT·code>, <RT·code>made</RT·code>): whether a person wrote the file or a tool produced it.</li>
+        <li><strong>Capability</strong> (<RT·code>tool</RT·code>, <RT·code>document</RT·code>, <RT·code>experiment</RT·code>): what the file is for.</li>
+        <li><strong>Lifecycle</strong> (<RT·code>scratchpad</RT·code>, <RT·code>stage</RT·code>): how long the file is expected to last, or where it is in promotion.</li>
+        <li><strong>Tracking</strong> (<RT·code>tracked</RT·code>, <RT·code>untracked</RT·code>): what version control does with it.</li>
+      </ul>
+
+      <h2>Authored, made, scratchpad, inherited</h2>
+      <p>
+        Files in a directory named <RT·code>authored</RT·code> were written by the project's team. They did not come with the skeleton, nor with the installation of other software, and they typically constitute the project's intellectual property. Build tools treat <RT·code>authored</RT·code> directories as read-only. All source that is built into a promotion or a release is placed in <RT·code>developer/authored</RT·code>.
+      </p>
+      <p>
+        Files that came with the skeleton are <RT·term>inherited</RT·term>. When the team edits one, such as <RT·code>developer/tool/build</RT·code>, it becomes a <RT·term>customization</RT·term>. New documents go in document directories and new tools in tool directories. Because the Harmony line stays in the version file, an administrator can tell which skeleton files a project has customized and which it has added.
+      </p>
+      <p>
+        Files in a directory named <RT·code>scratchpad</RT·code> are untracked, so a clone always has empty scratchpads. Tools place intermediate and staged files there, each in its own subdirectory, so a person who knows those names can also use a scratchpad as a temporary directory. The <RT·code>scratchpad</RT·code> tool maintains the scratchpad of the current directory. Note that its <RT·code>clear</RT·code> command deletes everything on that scratchpad.
+      </p>
+
+      <h1>Documents</h1>
+      <p>
+        Each directory named <RT·code>document</RT·code> holds documents for the role, or the scope, of its parent:
+      </p>
+      <ul>
+        <li><RT·code>document/</RT·code> : The project as a whole, such as this introduction.</li>
+        <li><RT·code>administrator/document/</RT·code> : Maintaining the project skeleton, adding dependencies, and making releases.</li>
+        <li><RT·code>developer/document/</RT·code> : Coding standards, conventions, and the build.</li>
+        <li><RT·code>tester/document/</RT·code> : Test plans and testing tools.</li>
+        <li><RT·code>consumer/&lt;namespace&gt;/document/</RT·code> : Documents released with the work product, such as manuals and API references.</li>
+      </ul>
+      <p>
+        Documents are written in HTML with the RT semantic tags, and formatted by RT-Style, a separate project at <RT·code>https://github.com/Thomas-Walker-Lynch/RT-Style</RT·code>. A document loads RT-Style through a short script block at the top of its head. To write a new document, copy an existing one, keep that block as it is, and type over the contents.
+      </p>
+      <p>
+        Documents are read in Chrome. With nothing set up, a document loads RT-Style from <RT·code>style.ReasoningTechnology.com</RT·code>. To read without a network connection, or against a local copy of RT-Style, open that copy's <RT·code>Manuscript/setup.html</RT·code> once in Chrome. Chrome then loads RT-Style from it for every local document.
+      </p>
+      <p>
+        <RT·code>document/writing_tool-script.html</RT·code> gives the conventions for writing tools.
+      </p>
+
+      <h1>What git tracks</h1>
+      <p>
+        Everything is tracked except:
+      </p>
+      <ul>
+        <li><RT·code>consumer/</RT·code>, apart from its <RT·code>.gitignore</RT·code>.</li>
+        <li>Every <RT·code>scratchpad/</RT·code>, apart from its <RT·code>.gitignore</RT·code>.</li>
+        <li>In <RT·code>shared/project-dependency/</RT·code>, whatever its <RT·code>.gitignore</RT·code> does not list as tracked.</li>
+        <li>Archives, editor backups, and compiled files, as listed in the top-level <RT·code>.gitignore</RT·code>.</li>
+      </ul>
+
+      <h1>Workflow and releases</h1>
+      <p>
+        The project moves forward through a cycle: the developer promotes a candidate, the tester tests it and files issues, and the developer fixes them and promotes again. The <RT·code>core-developer_branch</RT·code> is the branch the core development team works on. When the product manager judges the work product reliable and complete enough, the administrator makes a <RT·term>project release</RT·term> on a branch named <RT·code>release_v&lt;major&gt;</RT·code>, and tags it.
+      </p>
+      <p>
+        These documents give the details:
+      </p>
+      <ul>
+        <li><RT·code>document/role-and-workflow_product-development.html</RT·code> : The roles, and how their work interacts.</li>
+        <li><RT·code>document/role-and-workflow_product-maintenance.html</RT·code> : Issues, triage, and patching releases.</li>
+        <li><RT·code>administrator/document/how-to_release.html</RT·code> : Making a release.</li>
+      </ul>
+
+    </RT·article>
+  </body>
+</html>

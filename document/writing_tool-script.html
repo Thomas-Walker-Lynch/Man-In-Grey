@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Writing a tool script</title>
+    <script>
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
+    </script>
+  </head>
+  <body>
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title
+        author="RT"
+        date="2026-10-09"
+        title="Writing a tool script">
+      </RT·title>
+
+      <RT·TOC level="1"></RT·TOC>
+
+      <h1>Purpose</h1>
+
+      <p>
+        A tool is a script a person runs from a role setup to do work on files. This document gives the conventions for how an RT tool presents itself on the command line, reports what it does, and changes files safely. It complements <RT·code>RT-code-format.html</RT·code>, which covers identifier names, layout, and the separation of the <RT·code>CLI()</RT·code> function from the work functions. Those rules apply here and are not repeated.
+      </p>
+
+      <p>
+        The conventions serve three needs of the person at the keyboard. They must be able to see what a tool will do before it does it, read afterward what it did, and run it again without harm.
+      </p>
+
+      <p>
+        Examples are taken from <RT·code>RT-Style_header_v5_to_v6</RT·code>, the administrator tool that converts RT-Style version 5 document headers to version 6.
+      </p>
+
+      <h1>The command line</h1>
+
+      <h2>No arguments prints the help</h2>
+
+      <p>
+        A tool given no arguments prints its help message and exits with status 0. A person who types the bare name of a tool is asking what it does. Nothing on the file system changes.
+      </p>
+
+      <h2>The first argument is a command</h2>
+
+      <p>
+        The first argument names a command, written as a word, not a flag. The words <RT·code>help</RT·code>, <RT·code>-h</RT·code> and <RT·code>--help</RT·code> all print the help message. Further arguments, when a command accepts any, follow the command. A command that accepts no further arguments rejects them with an error.
+      </p>
+
+      <p>
+        An unknown command prints an error naming it, then the help message, and exits with a nonzero status.
+      </p>
+
+      <h2>The help message is the module docstring</h2>
+
+      <p>
+        In Python the help message is the module docstring, printed by <RT·code>print(__doc__.strip())</RT·code>. The documentation at the top of the file and the message the person sees are then the same text, and cannot drift apart. The docstring opens with the tool name, a paragraph on what the tool does, then the usage and one line per command:
+      </p>
+
+      <RT·code>
+        Usage: RT-Style_header_v5_to_v6 &lt;command&gt; [file ...]
+               RT-Style_header_v5_to_v6 preview &lt;command&gt; [file ...]
+
+          help | -h | --help   print this message (also printed when given no arguments)
+          project              walk the directory tree rooted at $REPO_HOME
+          tree                 walk the directory tree rooted at the current directory
+          local                only the current directory, no subdirectories
+          file &lt;name&gt; ...      only the named .html files
+          preview &lt;command&gt;    print the log of what &lt;command&gt; would do, change nothing
+      </RT·code>
+
+      <h2>Scope commands</h2>
+
+      <p>
+        A tool that acts on files found in a directory tree offers the same four commands for choosing which files:
+      </p>
+      <ul>
+        <li><RT·code>project</RT·code> walks the tree rooted at <RT·code>$REPO_HOME</RT·code>. When <RT·code>REPO_HOME</RT·code> is not set, the command is an error. Otherwise it behaves as <RT·code>tree</RT·code> run from <RT·code>$REPO_HOME</RT·code>, from whatever directory the person is in.</li>
+        <li><RT·code>tree</RT·code> walks the tree rooted at the current directory.</li>
+        <li><RT·code>local</RT·code> acts on the current directory only, without descending.</li>
+        <li><RT·code>file</RT·code> acts on the files named after it.</li>
+      </ul>
+
+      <p>
+        Only <RT·code>project</RT·code> depends on a Harmony project. The others work anywhere, because the files a tool serves are not always in a project. RT-Style documents, for example, appear in projects and outside them.
+      </p>
+
+      <h2>Preview</h2>
+
+      <p>
+        A tool that changes files offers <RT·code>preview</RT·code>, placed before any other command. <RT·code>preview tree</RT·code> prints the log that <RT·code>tree</RT·code> would print and changes nothing. The person reads it, decides, then runs the command without <RT·code>preview</RT·code>.
+      </p>
+
+      <p>
+        Preview is not a separate code path. The work functions are given a <RT·code>preview</RT·code> flag and test it only at the point of each action, immediately before writing or deleting. Everything else, finding files, deciding what to do, and logging, runs the same in both modes. A preview log that came from different code could not be trusted to describe the real run.
+      </p>
+
+      <h1>The log</h1>
+
+      <p>
+        A tool that acts on files prints a log of each thing it did. The log is for a person reading a terminal, and for that same person reading it again in a scrollback or a saved file later. This is the log of converting the Harmony skeleton documents, with the path on the first line shortened to fit the page:
+      </p>
+
+      <RT·code>
+        RT-Style_header_v5_to_v6 project   in /home/Thomas/.../project/Harmony
+          converted       administrator/document/how-to_release.html
+          converted       developer/document/naming_file-and-directory.html
+          converted       developer/document/single-file_C-module-and-namespace.html
+          converted       document/introduction_Harmony.html
+          converted       document/role-and-workflow_product-development.html
+          converted       document/role-and-workflow_product-maintenance.html
+
+        summary:
+             6  .html files converted to version 6
+             0  RT-Manuscript_locator.js files deleted
+             0  .html files already version 6
+             0  .html files with mentions to edit by hand
+             0  other .html files left alone
+      </RT·code>
+
+      <ul>
+        <li>The first line names the tool, the command, and the absolute directory the work is rooted in, so a saved log says where it came from.</li>
+        <li>Each action is one line. A fixed-width tag in the past tense says what happened, followed by the path relative to the root. Relative paths keep lines short and make logs from different machines comparable.</li>
+        <li>In a preview the tags read <RT·code>would convert</RT·code>, <RT·code>would delete</RT·code>, and the summary ends with <RT·code>preview only: nothing was changed</RT·code>.</li>
+        <li>A decision not to act is logged too, with the reason in parentheses, as in <RT·code>kept  shared/document/RT-Manuscript_locator.js  (no version 5 document beside it)</RT·code>. A file the tool left alone on purpose must be distinguishable from one it missed.</li>
+        <li>Work the tool cannot do safely is logged with the tag <RT·code>edit by hand</RT·code>, the file, the line number and the line, as in <RT·code>edit by hand  .../Document/user.html:83: &amp;lt;script src=...</RT·code>, so a person can go straight to it.</li>
+        <li>A summary of counts ends the log. A count line that would always be zero for a run, such as errors, may be left out when it is zero.</li>
+        <li>Walk directories and files in sorted order, so two runs over the same tree produce the same log.</li>
+      </ul>
+
+      <p>
+        Errors are logged on their own lines with the tag <RT·code>error</RT·code>, the tool carries on with the remaining files, and the exit status is nonzero when any error occurred. Errors in the command line itself are printed to standard error before any work starts.
+      </p>
+
+      <h1>Walking directories</h1>
+
+      <p>
+        A tool walks every directory in its scope, whatever the directory is named. It does not skip directories by name, since a name that means nothing to the tool's author may hold files that matter to its user.
+      </p>
+
+      <p>
+        A tool does not follow symbolic links to directories. A Harmony project has <RT·code>shared/project-dependency/project</RT·code> pointing to <RT·code>../../../</RT·code>, the directory holding all the projects. Following it would send the walk into every neighboring project and around the loop back into this one. In Python, <RT·code>os.walk</RT·code> does not follow such links unless given <RT·code>followlinks=True</RT·code>, so leave that argument out.
+      </p>
+
+      <h1>Paths</h1>
+
+      <p>
+        A tool forms an absolute path only by starting from an environment variable that the role setup provides, such as <RT·code>$REPO_HOME</RT·code>. Paths the tool writes into files, and symbolic links it creates, are relative.
+      </p>
+
+      <p>
+        An absolute path written into a file is correct for only one view of the file system. Under the subu arrangement, the master user reaches a sub-user's files through a mapped mount at a different absolute path from the one the sub-user sees. A path recorded by one of them is then unreadable, or points somewhere else, for the other. A relative path is resolved from wherever the file is reached, so it is correct in every view.
+      </p>
+
+      <h1>Changing files safely</h1>
+
+      <h2>Checkpoint first</h2>
+
+      <p>
+        A tool edits files in place and does not make backup copies. The person checkpoints the project with git before running it, and reviews the result with <RT·code>git diff</RT·code>. Run <RT·code>preview</RT·code> first.
+      </p>
+
+      <h2>Change only what is recognized exactly</h2>
+
+      <p>
+        Match the precise form the tool was written to change, in the precise place it occurs. <RT·code>RT-Style_header_v5_to_v6</RT·code> replaces a locator script line only when it stands alone on a line inside <RT·code>&lt;head&gt;</RT·code>. A mention of the locator anywhere else, such as an escaped example in a manual, is not touched. It is logged for a person to edit.
+      </p>
+
+      <h2>Keep everything not being changed</h2>
+
+      <p>
+        Carry over what the edit is not about: the indentation of a replaced line, line endings, file permissions, and every other line of the file byte for byte. After a run, <RT·code>git diff</RT·code> should show the intended change and nothing else.
+      </p>
+
+      <h2>Running twice does no harm</h2>
+
+      <p>
+        A second run of the same command finds nothing left to do, changes nothing, and says so in its summary. A tool achieves this by recognizing work already done. The header converter counts a file holding the version 6 block as <RT·code>already version 6</RT·code> and leaves it alone. A person can therefore rerun a tool to confirm a job is complete, or to finish one that stopped part way.
+      </p>
+
+      <h2>Before deleting, check nothing still uses it</h2>
+
+      <p>
+        A tool deletes a file only when nothing remaining depends on it. In testing, the header converter run with <RT·code>file</RT·code> on two of six test documents in a directory deleted the shared locator file while the other four still needed it. The rule now is that a locator is deleted only when no unconverted version 5 document beside it still loads it. Otherwise it is kept, and the log names the documents still using it.
+      </p>
+
+      <h2>Leave alone what the tool cannot identify as its own</h2>
+
+      <p>
+        A file with the right name in an unexpected place is not evidence that the tool should remove it. The converter keeps a locator file that has no version 5 document beside it, and logs it as <RT·code>kept</RT·code>, leaving the decision to a person.
+      </p>
+
+      <h1>Testing a tool</h1>
+
+      <p>
+        Test a new tool on a copy of real material before it runs on the original. An archive of the project, extracted into a scratch directory, gives realistic files that can be discarded.
+      </p>
+      <ol>
+        <li>Run with no arguments, an unknown command, and each command's error cases, such as <RT·code>project</RT·code> with <RT·code>REPO_HOME</RT·code> unset or <RT·code>file</RT·code> naming a file that does not exist.</li>
+        <li>Run <RT·code>preview</RT·code> and confirm that nothing changed, for example with <RT·code>diff -r</RT·code> against an untouched copy.</li>
+        <li>Run each scope command from more than one directory, including from outside any project.</li>
+        <li>Run each command twice. The second run must report nothing left to do.</li>
+        <li>Run on part of a job, such as <RT·code>file</RT·code> on some of the documents in a directory, and confirm the rest still work.</li>
+        <li>Read the diff of a changed file in full.</li>
+      </ol>
+
+      <h1>A skeleton</h1>
+
+      <p>
+        A Python tool laid out to these conventions begins with <RT·code>#!/usr/bin/env python3</RT·code>, then the Emacs mode line the Harmony tools carry, which sets two-space indentation and no tabs. The rest of the skeleton follows:
+      </p>
+
+      <RT·code>
+        """
+        tool_name
+
+        What the tool does, in a paragraph.
+
+        Usage: tool_name &lt;command&gt; [file ...]
+               tool_name preview &lt;command&gt; [file ...]
+
+          help | -h | --help   print this message, also printed given no arguments
+          project              walk the tree rooted at $REPO_HOME
+          tree                 walk the tree rooted at the current directory
+          local                only the current directory
+          file &lt;name&gt; ...      only the named files
+          preview &lt;command&gt;    print the log of &lt;command&gt;, change nothing
+        """
+
+        import sys ,os
+        from pathlib import Path
+
+        def work(dirpa_root ,recursive ,preview):
+          ...
+
+        def print_help():
+          print(__doc__.strip())
+          return 0
+
+        def CLI(argv=None):
+          if argv is None: argv = sys.argv[1:]
+          if not argv or argv[0] in ("help" ,"-h" ,"--help"): return print_help()
+
+          preview = argv[0] == "preview"
+          if preview: argv = argv[1:]
+          if not argv:
+            print("Error: 'preview' needs a command after it." ,file=sys.stderr)
+            return 1
+
+          command ,rest = argv[0] ,argv[1:]
+          ...
+
+        if __name__ == "__main__":
+          sys.exit(CLI())
+      </RT·code>
+
+      <h1>Exercises</h1>
+
+      <h2>Exercise 1: The bare tool</h2>
+      <p>
+        A tool named <RT·code>tidy</RT·code> deletes editor backup files ending in <RT·code>~</RT·code>. When run with no arguments it deletes them from the current directory. List what is wrong with that behavior under these conventions, and give the command line it should have instead.
+      </p>
+
+      <h2>Exercise 2: A log line</h2>
+      <p>
+        A tool prints <RT·code>Processing /home/Thomas/subu/developer/project/Two/document/a.html ... done</RT·code> for every file it looks at, whether or not it changed it. Rewrite the log for a run in which one of three files was changed, one was already correct, and one could not be read.
+      </p>
+
+      <h2>Exercise 3: A safe delete</h2>
+      <p>
+        A tool replaces each <RT·code>include.css</RT·code> link in an HTML document with an inline style block, then deletes <RT·code>include.css</RT·code> from the directory. Describe the run in which this breaks a document, and the check that prevents it.
+      </p>
+
+    </RT·article>
+  </body>
+</html>

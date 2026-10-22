@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>C modules, namespaces, and the build lifecycle</title>
+    <script>
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
+    </script>
+  </head>
+  <body>
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title 
+        author="Thomas Walker Lynch" 
+        date="2026-03-11" 
+        title="C modules, namespaces, and the build lifecycle">
+      </RT·title>
+
+      <RT·TOC level="1"></RT·TOC>
+
+      <h1>Single-file C source</h1>
+      <p>
+        The RT C language culture abandons the traditional separation of declarations into <RT·code>.h</RT·code> header files and definitions into <RT·code>.c</RT·code> source files. A developer integrates the interface and the implementation into a single file. 
+      </p>
+      <p>
+        When a person includes the file using an <RT·code>#include</RT·code> directive, the file exposes only its interface. When the build system compiles the file into an object, a preprocessor macro acts as an implementation gate to compile the definitions. This keeps the source tree clean and ensures the interface and implementation never fall out of synchronization.
+      </p>
+
+      <h1>Ad hoc namespaces</h1>
+      <p>
+        The C language lacks native namespaces. To prevent symbol collisions in large projects, RT code format uses a center dot (<RT·code>·</RT·code>) to denote ad hoc namespaces within identifiers. 
+      </p>
+      <p>
+        A programmer maps the directory structure directly to these namespaces. For example, a file located at <RT·code>authored/ExampleGreet/Math.lib.c</RT·code> belongs to the <RT·code>ExampleGreet</RT·code> namespace and defines the <RT·code>Math</RT·code> module. 
+      </p>
+      <ul>
+        <li>Types and modules use <RT·code>PascalCase</RT·code>.</li>
+        <li>Functions and variables use <RT·code>snake_case</RT·code>.</li>
+      </ul>
+      <p>
+        An exported function from this module carries the full namespace and module prefix, such as <RT·code>ExampleGreet·Math·add</RT·code>.
+      </p>
+
+      <h1>The implementation gate</h1>
+      <p>
+        To achieve the single-file source pattern, the code relies on two preprocessor constructs:
+      </p>
+      <ul>
+        <li><strong>Include Guard:</strong> The entire file is wrapped in an include guard using the <RT·code>·ONCE</RT·code> suffix. This prevents redeclaration errors if the file is included multiple times.</li>
+        <li><strong>Implementation Block:</strong> The definitions are wrapped in a single <RT·code>#ifdef</RT·code> block using the exact namespace and module name. The build system dynamically injects this macro via a <RT·code>-D</RT·code> compiler flag when building the module's specific object file.</li>
+      </ul>
+      
+      <h2>Build system mechanics</h2>
+      <p>
+        When a consumer file, such as <RT·code>hello.CLI.c</RT·code>, contains <RT·code>#include "Math.lib.c"</RT·code>, the compiler processes the file without the <RT·code>ExampleGreet·Math</RT·code> macro defined. It skips the implementation and reads only the function prototype.
+      </p>
+      <p>
+        When the orchestrator compiles the library object, it evaluates the target name and explicitly passes <RT·code>-DExampleGreet·Math</RT·code> to the compiler. This unlocks the gate, compiling the machine code for the definitions into <RT·code>Math.lib.o</RT·code>.
+      </p>
+
+      <h2>Example: Math.lib.c</h2>
+      <p>
+        The following example demonstrates the complete structure.
+      </p>
+
+      <RT·code>
+        #ifndef ExampleGreet·Math·ONCE
+        #define ExampleGreet·Math·ONCE
+
+        int ExampleGreet·Math·add(int a ,int b);
+
+        #ifdef ExampleGreet·Math
+
+        int ExampleGreet·Math·add(int a ,int b){
+          return a + b;
+        }
+
+        #endif // ExampleGreet·Math
+        #endif // ExampleGreet·Math·ONCE
+      </RT·code>
+
+      <h2>Cross-module dependencies</h2>
+      <p>
+        When one module depends on another, the developer directly includes the library source file. For example, if the Greeter module requires the Math module, the file <RT·code>Greeter.lib.c</RT·code> will contain:
+      </p>
+      <RT·code>
+        #include "Math.lib.c"
+      </RT·code>
+      <p>
+        Because every file is protected by a <RT·code>·ONCE</RT·code> include guard, it is safe for multiple modules to include the same dependency. The preprocessor will expand the interface once per translation unit.
+      </p>
+
+      <h2>Information hiding</h2>
+      <p>
+        To define internal helper functions or private data that should not be exposed in the module's public interface, a programmer places them strictly inside the <RT·code>#ifdef</RT·code> implementation block.
+      </p>
+      <p>
+        To prevent these internal symbols from leaking into the global namespace during linking, they must be given internal linkage. The RT skeleton provides the <RT·code>Local</RT·code> macro (defined as <RT·code>static</RT·code> in <RT·code>RT_global.h</RT·code>) for this exact purpose.
+      </p>
+      <RT·code>
+        #ifdef ExampleGreet·Math
+
+        Local int internal_helper(int val){
+          return val * 2;
+        }
+
+        int ExampleGreet·Math·add(int a ,int b){
+          return internal_helper(a) + b;
+        }
+
+        #endif // ExampleGreet·Math
+      </RT·code>
+
+      <h2>Executable entry points</h2>
+      <p>
+        Programs intended to be compiled into standalone executables use the <RT·code>.CLI.c</RT·code> suffix. These files consume the library modules but do not define their own namespaces or include guards, as they are never included by other files.
+      </p>
+      <p>
+        A <RT·code>.CLI.c</RT·code> file includes the necessary <RT·code>.lib.c</RT·code> files, parses command-line arguments in the <RT·code>main</RT·code> function, and passes native data types to a dedicated <RT·code>CLI()</RT·code> function to orchestrate the core logic.
+      </p>
+
+      <h1>Directory structure and namespaces</h1>
+      <p>
+        The physical layout of the <RT·code>authored</RT·code> directory dictates how the build orchestrator finds the source code.
+      </p>
+      <ul>
+        <li><strong>Flat Structure:</strong> If a project does not utilize namespaces, the <RT·code>.lib.c</RT·code> and <RT·code>.CLI.c</RT·code> files reside directly inside the <RT·code>developer/authored/</RT·code> directory.</li>
+        <li><strong>Namespaced Structure:</strong> If a project utilizes namespaces, the files are grouped into subdirectories matching the namespace name, such as <RT·code>developer/authored/ExampleGreet/</RT·code>.</li>
+      </ul>
+
+      <h1>Making the code</h1>
+      <p>
+        The developer compiles the code using the <RT·code>make</RT·code> wrapper script located in <RT·code>developer/tool/make</RT·code>. This script accepts two primary arguments: the build command and the target namespace.
+      </p>
+
+      <RT·code>
+        > make &lt;command&gt; [namespace]
+      </RT·code>
+
+      <p>
+        To build the <RT·code>ExampleGreet</RT·code> code, a person issues the following command from the developer workspace:
+      </p>
+
+      <RT·code>
+        > make all ExampleGreet
+      </RT·code>
+
+      <p>
+        Behind the scenes, the <RT·code>make</RT·code> wrapper assigns the namespace to an environment variable and calls the master orchestrator makefile. The orchestrator detects the namespace, updates the source directory search path to <RT·code>authored/ExampleGreet</RT·code>, and injects the appropriate namespace macros during compilation. 
+      </p>
+      <p>
+         The orchestrator compiles the <RT·code>.lib.c</RT·code> files into object files under <RT·code>scratchpad/build/object/</RT·code>, archives them into a library file, and links the <RT·code>.CLI.c</RT·code> objects into standalone executables. The final artifacts are placed in the <RT·code>scratchpad/made/</RT·code> directory.
+      </p>
+
+      <h1>Promoting the artifacts</h1>
+      <p>
+        Artifacts resting in the scratchpad are volatile and private to the developer. To share the executables and libraries with the rest of the project (such as the tester or consumer roles), the developer must promote them.
+      </p>
+      
+      <RT·code>
+        > promote write
+      </RT·code>
+
+      <p>
+        The <RT·code>promote</RT·code> tool compares the contents of <RT·code>developer/scratchpad/made/</RT·code> against <RT·code>consumer/made/</RT·code>. It atomically copies any new or updated files to the consumer workspace, stripping write permissions to enforce the immutability of the deployment target. Once promoted, the <RT·code>hello</RT·code> executable is ready for testing.
+      </p>
+
+    </RT·article>
+  </body>
+</html>

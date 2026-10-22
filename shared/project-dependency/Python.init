@@ -1,0 +1,25 @@
+# -*- mode: sh; sh-shell: bash; -*-
+# init files are bash script
+
+# Python.init
+# --------------------------------------------------------------------------------
+# Put the project's Python build at the front of PATH, but only when it runs.
+#
+# Every '#!/usr/bin/env python3' script the person runs, their own tools
+# included, takes the first python3 on PATH. A build that cannot start, for
+# example one that lost its libpython after its directory moved, must not be
+# put there, or all of those scripts fail with it. The test runs the
+# interpreter once with an empty program.
+
+python_dp="$REPO_HOME/shared/project-dependency/Python-3.12.3"
+if [[ ! -e "$python_dp" ]]; then
+  if [[ "$ROLE" == "administrator" ]]; then
+    echo "Python.init: no $python_dp; using the system python3"
+  fi
+elif "$python_dp/bin/python3" -c '' 2>/dev/null; then
+  PATH="$python_dp/bin:$PATH"
+else
+  echo "Python.init: $python_dp/bin/python3 does not run; using the system python3" >&2
+  echo "Python.init: run it directly to see why, and see Python.org beside this file" >&2
+fi
+unset python_dp

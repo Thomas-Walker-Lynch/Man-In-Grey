@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+"""
+developer/tool/build - Build Orchestrator Wrapper
+
+This script acts as the primary entry point for staging the project.
+It parses colon-separated arguments mapping specific namespaces to their
+intended build arguments.
+
+It enforces the structural convention where authored directories must
+be named <Namespace>.<Tool>. The script delegates execution to 
+developer/tool/build_component/<Tool>.
+"""
+
+import sys, os, subprocess, fnmatch
+from typing import Dict, Tuple
+
+def check_environment() -> None:
+  setup_must_be = "developer/tool/setup"
+  current_setup = os.environ.get("SETUP", "")
+  if current_setup != setup_must_be:
+    print(f"developer/tool/build:: error: must be run in the {setup_must_be} environment", file=sys.stderr)
+    sys.exit(1)
+
+def get_namespaces() -> Dict[str, Tuple[str, str]]:
+  authored_dir = os.path.join(os.environ.get("REPO_HOME", "."), "developer", "authored")
+  if not os.path.isdir(authored_dir):
+    return {}
+  
+  namespaces = {}
+  for TM_item in os.listdir(authored_dir):
+    path = os.path.join(authored_dir, TM_item)
+    if os.path.isdir(path) and not TM_item.startswith("."):
+      parts = TM_item.rsplit(".", 1)
+      if len(parts) == 2:
+        ns = parts[0]
+        tool = parts[1]
+        namespaces[ns] = (tool, TM_item)
+      else:
+        print(f"(warning) Ignoring '{TM_item}': directory lacks the required .<tool> suffix.", file=sys.stderr)
+        
+  return dict(sorted(namespaces.items()))
+
+def print_usage(namespaces: Dict[str, Tuple[str, str]]) -> None:
+  print("Usage: build [<namespace_pattern>[:<argument>]*]*\n")
+  print("Arguments are passed directly to the component specified by the directory suffix.\n")
+  
+  print("Available namespaces:")
+  if namespaces:
+    for TM_ns, (TM_tool, TM_raw_dir) in namespaces.items():
+      print(f"  {TM_ns:<20} (Component: {TM_tool}, Dir: {TM_raw_dir})")
+  else:
+    print("  (No conforming namespaces currently found in authored/)")
+  
+  print("\nExamples:")
+  print("  build                                      (Displays this usage message)")
+  print("  build ExampleGreet                         (Executes 'all' via its assigned component)")
+  print("  build Ex*:library RT:all:information       (Batch execution with pattern matching)")
+  print("  build \"*:clean\"                            (Cleans all namespaces. Quotes prevent Bash expansion)")
+
+def run_build(argument: str, namespace: str, tool: str, raw_dir: str) -> None:
+  tool_path = os.path.join("tool", "build_component", tool)
+  
+  if not os.path.isfile(tool_path) or not os.access(tool_path, os.X_OK):
+    print(f"error: Build component '{tool}' for namespace '{namespace}' is missing or not executable at {tool_path}", file=sys.stderr)
+    sys.exit(1)
+
+  env = os.environ.copy()
+  env["NAMESPACE"] = namespace
+  env["NAMESPACE_DIR"] = raw_dir
+  
+  tool_cmd = [tool_path, argument]
+  
+  try:
+    subprocess.run(tool_cmd, env=env, check=True)
+  except subprocess.CalledProcessError as e:
+    print(f"Build component '{tool}' failed for namespace '{namespace}' with exit code {e.returncode}", file=sys.stderr)
+    sys.exit(e.returncode)
+
+def CLI() -> None:
+  check_environment()
+  
+  repo_home = os.environ.get("REPO_HOME", ".")
+  dev_dir = os.path.join(repo_home, "developer")
+  os.chdir(dev_dir)
+  
+  args = sys.argv[1:]
+  namespaces = get_namespaces()
+  
+  if not args or args[0] in ["usage", "help", "-h", "--help"]:
+    print_usage(namespaces)
+    sys.exit(0)
+    
+  matched_any = False
+  ns_keys = list(namespaces.keys())
+
+  for TM_arg in args:
+    parts = TM_arg.split(":")
+    pattern = parts[0]
+    arguments = parts[1:]
+    
+    if not arguments:
+      arguments = ["all"]
+      
+    matches = fnmatch.filter(ns_keys, pattern)
+
+    if not matches:
+      print(f"(warning) Pattern '{pattern}' matched no namespaces.", file=sys.stderr)
+      continue
+
+    matched_any = True
+    for TM_ns in matches:
+      tool, raw_dir = namespaces[TM_ns]
+      for TM_argument in arguments:
+        run_build(TM_argument, TM_ns, tool, raw_dir)
+  
+  if not matched_any:
+    sys.exit(1)
+
+  print("build done.")
+
+if __name__ == "__main__":
+  CLI()

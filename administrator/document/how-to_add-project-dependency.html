@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>How to add a project dependency</title>
+    <script>
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
+    </script>
+  </head>
+  <body>
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title
+        author="Thomas Walker Lynch"
+        date="2026-10-09"
+        title="How to add a project dependency">
+      </RT·title>
+
+      <RT·TOC level="1"></RT·TOC>
+
+      <h1>Project dependencies</h1>
+
+      <p>
+        A <RT·term>project dependency</RT·term> is software the project uses but did not author: a language toolchain, a library, a tool, or another project. A dependency is installed outside the project, as a sibling directory of it, and is linked into the project under <RT·code>shared/project-dependency</RT·code>.
+      </p>
+
+      <p>
+        Getting an arbitrary piece of software working is different every time, so the administrator is free to do whatever a dependency needs inside <RT·code>shared/project-dependency</RT·code>. The skeleton relies on only the few conventions given in the next section.
+      </p>
+
+      <h1>What the skeleton relies on</h1>
+
+      <ul>
+        <li><RT·code>project</RT·code> : A link to <RT·code>../../../</RT·code>, the directory that holds this project and its siblings. It comes with the skeleton. Links to dependencies are made through it, so they are relative and stay correct in every clone.</li>
+        <li><RT·code>&lt;name&gt;.init</RT·code> : A bash script that every role setup sources, for every role, each time a person takes on a role. It puts the dependency into the environment, typically by adding to <RT·code>PATH</RT·code> or exporting variables.</li>
+        <li><RT·code>&lt;name&gt;.org</RT·code> or <RT·code>&lt;name&gt;.html</RT·code> : Notes on how the dependency was installed, so that each team member can repeat the installation after cloning. Short notes may instead be comments at the top of <RT·code>&lt;name&gt;.init</RT·code>.</li>
+        <li><RT·code>&lt;name&gt;.install</RT·code> : Optional. A script that carries out the installation, where it can be automated. A person runs it; setup never does.</li>
+        <li><RT·code>.gitignore</RT·code> : Belongs to the administrator. It decides which of the files in the directory are tracked.</li>
+      </ul>
+
+      <p>
+        Files for one dependency share a base name, so that <RT·code>Python.init</RT·code>, <RT·code>Python.org</RT·code>, and the link they describe sit together in a listing.
+      </p>
+
+      <h1>Steps</h1>
+
+      <h2>Install the dependency beside the project</h2>
+      <p>
+        Download, clone, or extract the dependency into the directory that holds the project, so that it sits as a sibling of the project directory. Build it there if it needs building.
+      </p>
+
+      <h2>Link it</h2>
+      <p>
+        Make the link through the <RT·code>project</RT·code> link. The word <RT·code>project</RT·code> in the link target is literal.
+      </p>
+      <RT·code>
+        > cd $REPO_HOME/shared/project-dependency
+        > ln -s project/&lt;dependency directory&gt; &lt;name&gt;
+      </RT·code>
+
+      <h2>Write the init file</h2>
+      <p>
+        Write <RT·code>&lt;name&gt;.init</RT·code> in the same directory. Because it runs on every setup for every role, keep it to setting the environment:
+      </p>
+      <ul>
+        <li>Make it quick, and safe to run any number of times.</li>
+        <li>Do not install, build, or download anything from it.</li>
+        <li>Test that the dependency is present before using it, so that a clone without the dependency still sets up.</li>
+        <li>Print nothing in normal use. A notice for the administrator role, when the dependency is missing, is fine.</li>
+      </ul>
+      <p>
+        <RT·code>Python.init</RT·code>, which comes with the skeleton, is an example:
+      </p>
+      <RT·code>
+        if [[ -d "$REPO_HOME/shared/project-dependency/Python-3.12.3/bin" ]]; then
+          PATH="$REPO_HOME/shared/project-dependency/Python-3.12.3/bin:$PATH"
+        else
+          if [[ "$ROLE" == "administrator" ]]; then
+             echo "Notice: Local Python-3.12.3 bin not found. Using system Python."
+          fi
+        fi
+      </RT·code>
+
+      <h2>Write the installation notes</h2>
+      <p>
+        Record what was installed, where it came from, and the commands used, in <RT·code>&lt;name&gt;.org</RT·code>, <RT·code>&lt;name&gt;.html</RT·code>, or comments in the init file. A team member who has cloned the project follows these notes to install the dependency, and then recreates the link if it is not tracked.
+      </p>
+
+      <h2>Decide what is tracked</h2>
+      <p>
+        The skeleton's <RT·code>.gitignore</RT·code> tracks itself, the <RT·code>project</RT·code> link, and files ending in <RT·code>.init</RT·code>, <RT·code>.install</RT·code>, <RT·code>.org</RT·code>, and <RT·code>.html</RT·code>. Everything else in the directory is ignored. To track a dependency's link, so that it arrives with every clone, add a line naming it:
+      </p>
+      <RT·code>
+        !&lt;name&gt;
+      </RT·code>
+      <p>
+        A tracked link points at nothing until the dependency is installed beside the project, which is why init files test for the dependency before using it.
+      </p>
+
+      <h2>Commit</h2>
+      <p>
+        Add the init file, the notes, the <RT·code>.gitignore</RT·code> change, and any tracked link, then commit.
+      </p>
+
+    </RT·article>
+  </body>
+</html>

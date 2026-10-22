@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Product development roles and workflow</title>
+    <script>
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
+    </script>
+  </head>
+  <body>
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title 
+        author="Thomas Walker Lynch" 
+        date="2026-03-09" 
+        title="Product development roles and workflow">
+      </RT·title>
+
+      <RT·TOC level="1"></RT·TOC>
+
+      <h1>Roles as hats</h1>
+      <p>
+        In Harmony, a role is a hat a person wears. There can be multiple people sharing a single role, and a single person can wear many hats. Some roles interact directly with the project directory structure, while others guide the process from outside the codebase. 
+      </p>
+
+      <h2>Workspace roles</h2>
+      <p>
+        These roles interact directly with the repository. To enter a workspace, change directory to the top-level of the project and source the setup file for the desired role:
+      </p>
+      <RT·code>
+        > ./setup administrator
+        > ./setup developer
+        > ./setup tester
+        > ./setup consumer
+      </RT·code>
+
+      <p>This will run a new shell with the proper environment setting. It is common for a person to have multiple shells, terminal sessions, or IDEs open, each running under a different role environment.  Development and tests is a common pair, though tests are intended to be production tests. The developer has an <RT·code>experiment</RT·code> directory for experiments.
+      </p>
+
+      <h3>Administrator role</h3>
+      <p>Responsibilities:</p>
+      <ol>
+        <li>Set up the project directory and keep it in sync with the Harmony skeleton.</li>
+        <li>Maintain role environments (apart from role-specific <RT·code>tool/setup</RT·code> files).</li>
+        <li>Install and maintain shared and third_party tools, addressing issues with the project workflow. Note that the term "third_party" encompasses any software not authored within this specific project.</li>
+      </ol>
+
+      <h3>Developer role</h3>
+      <p>Responsibilities and Boundaries:</p>
+      <ol>
+        <li>Write and modify <RT·code>authored/</RT·code> source.</li>
+        <li>Run builds and place artifacts in <RT·code>scratchpad/made</RT·code>, then execute the <RT·code>promote write</RT·code> script to copy artifacts to <RT·code>consumer/made</RT·code> for testing.</li>
+        <li>Run experiments in <RT·code>experiment/</RT·code>. These experiments can sometimes be promoted to formal tests, but there is no requirement to do so. The developer role should not blur into the tester role; experiments are informal, whereas tests are formal and retained.</li>
+        <li><strong>Strict Boundary:</strong> A developer never writes into the <RT·code>tester/</RT·code> directory. Instead, a developer adds tests to <RT·code>developer/experiment/</RT·code> and offers to share them.</li>
+      </ol>
+
+      <h3>Tester role</h3>
+      <p>Responsibilities and Boundaries:</p>
+      <ol>
+        <li>Evaluate candidates under <RT·code>consumer/made/</RT·code> and run regression suites to confirm:
+          <ul>
+            <li>That the code does not crash.</li>
+            <li>That consumers do not have a bad experience.</li>
+            <li>That the goals specified by the product manager are met.</li>
+          </ul>
+        </li>
+        <li>File issues and communicate feedback to the developers.</li>
+        <li><strong>Strict Boundary:</strong> A tester never patches code in the <RT·code>developer/</RT·code> directory. Instead, the tester files issues or proposes code fixes on a separate branch.</li>
+      </ol>
+
+      <h3>Consumer role</h3>
+      <p>Responsibilities:</p>
+      <ol>
+        <li>Act as the end-user simulation environment.</li>
+        <li>Consume and deploy artifacts exclusively from the <RT·code>consumer/made/</RT·code> target.</li>
+        <li>Never author or modify code; strictly run local builds or deployments for architecture-specific testing.</li>
+        <li>Report issues. (Anyone can report an issue, and consumers regularly do).</li>
+      </ol>
+
+      <h2>External roles</h2>
+      <p>
+        These roles drive the project forward but do not have a dedicated <RT·code>setup &lt;role&gt;</RT·code> workspace, as they do not directly build or test the code in that capacity. If these individuals need to interface with the code, they simply put on a workspace role hat, such as administer, developer, tester, or consumer.
+      </p>
+
+      <h3>Product manager</h3>
+      <p>
+        The product manager receives specifications from the architect and sets the specific goals for a release. When the project manager provides updates indicating readiness, the product manager makes the final decision to cut a project release.
+      </p>
+
+      <h3>Project manager</h3>
+      <p>
+        The project manager owns the schedule (such as the Gantt chart) and monitors progress. They coordinate code reviews, read issues and announcements, reformulate the schedule, and instruct the product manager. When parts of the codebase are outsourced, the project manager serves as the primary point of contact with the external teams.
+      </p>
+
+      <h3>Architect</h3>
+      <p>
+        The architect writes the original specification, sets the technical direction, and performs code reviews. The architect might be a contractor or an in-house team member.
+      </p>
+
+      <h1>The four interacting loops</h1>
+      <p>
+        The project moves forward through the continuous interaction of four distinct operational cycles.
+      </p>
+      
+      <ol>
+        <li><strong>Developer Loop:</strong> Write code, compile to the scratchpad made directory, promote to the consumer made directory, announce the promotion to the tester, read issues, and repeat.</li>
+        <li><strong>Tester Loop:</strong> Read developer announcements, read the consumer made directory, run tests, and file issues.</li>
+        <li><strong>Product Manager Loop:</strong> Provide specifications to the developer, receive progress updates from the project manager, and instruct the project administrator to make new git branch project releases and deploy.</li>
+        <li><strong>Project Manager Loop:</strong> Own the Gantt chart, coordinate code reviews, read issues and announcements, reformulate the Gantt chart, and instruct the product manager.</li>
+      </ol>
+
+      <h1>Promotion mechanics</h1>
+      <p>
+        Building and promotion are separate activities. The developer compiles and places files in <RT·code>developer/scratchpad/made</RT·code>. The developer then runs <RT·code>promote write</RT·code> to transfer those files to <RT·code>consumer/made</RT·code>. 
+      </p>
+      <p>
+        The <RT·code>consumer/made</RT·code> directory is strictly an untracked deployment target. No tools are permitted to rebuild during promotion, and no builds are run directly inside the consumer made directory.
+      </p>
+
+    </RT·article>
+  </body>
+</html>

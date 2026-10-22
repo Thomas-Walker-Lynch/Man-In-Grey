@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+
+import sys ,os ,filecmp ,stat ,subprocess
+from pathlib import Path
+
+def get_project_name(repo_path: Path) -> str:
+  return repo_path.resolve().name
+
+def get_git_branch(repo_path: Path) -> str:
+  try:
+    result = subprocess.run(
+      ["git" ,"-C" ,str(repo_path) ,"branch" ,"--show-current"],
+      capture_output=True ,text=True ,check=True
+    )
+    branch = result.stdout.strip()
+    return branch if branch else "unknown_branch"
+  except (subprocess.CalledProcessError ,FileNotFoundError):
+    return "unknown_branch"
+
+def format_perms(mode: int) -> str:
+  # Extract the 9-character permission string (e.g., rwxr-xr-x), dropping the leading file type char
+  return stat.filemode(mode)[1:]
+
+def CLI(argv=None) -> int:
+  if argv is None:
+    argv = sys.argv[1:]
+
+  if len(argv) != 2:
+    print("Usage: skeleton_diff <path_to_Harmony> <path_to_project>")
+    return 1
+
+  harmony_dir = Path(argv[0]).resolve()
+  project_dir = Path(argv[1]).resolve()
+
+  if not harmony_dir.is_dir() or not project_dir.is_dir():
+    print("Error: Both arguments must be valid directories." ,file=sys.stderr)
+    return 1
+
+  project_name = get_project_name(project_dir)
+  harmony_branch = get_git_branch(harmony_dir)
+  project_branch = get_git_branch(project_dir)
+  
+  # Data structures for the output sections
+  opus_warnings = []
+  missing_files = []
+  
+  # Time-based modification buckets
+  mod_harmony_newer = []
+  mod_same_time = []
+  mod_project_newer = []
+  
+  perms_only_changes = []
+  added_files = []
+  
+  # --- Section 1: Opus File Structural Audit ---
+  project_opus = f"0pus_{project_name}"
+  harmony_opus = "0pus_Harmony"
+  found_opus = False
+
+  for TM_item in os.listdir(project_dir):
+    if TM_item.startswith("0pus_") and os.path.isfile(project_dir / TM_item):
+      if TM_item == project_opus:
+        found_opus = True
+      else:
+        opus_warnings.append(f"Incorrectly named Opus file found: '{TM_item}'. Expected '{project_opus}'.")
+        
+  if not found_opus:
+    opus_warnings.append(f"Expected Opus file '{project_opus}' is MISSING from project root.")
+
+  # Semantic boundaries: isolate the skeleton by ignoring user zones
+  IGNORED_DIRS = {".git" ,"scratchpad" ,"consumer" ,"authored" ,"__pycache__"}
+  IGNORED_EXTS = {".pyc" ,".pyo" ,".swp" ,".bak"}
+
+  def is_ignored(path_obj: Path) -> bool:
+    if path_obj.name in IGNORED_DIRS: return True
+    if path_obj.suffix in IGNORED_EXTS: return True
+    if path_obj.name.endswith("~"): return True
+    return False
+
+  harmony_files = set()
+  for TM_root ,TM_dirs ,TM_files in os.walk(harmony_dir):
+    TM_dirs[:] = [TM_d for TM_d in TM_dirs if not is_ignored(Path(TM_d))]
+    for TM_f in TM_files:
+      f_path = Path(TM_root) / TM_f
+      if not is_ignored(f_path):
+        rel_path = f_path.relative_to(harmony_dir)
+        harmony_files.add(str(rel_path))
+
+  project_files = set()
+  for TM_root ,TM_dirs ,TM_files in os.walk(project_dir):
+    TM_dirs[:] = [TM_d for TM_d in TM_dirs if not is_ignored(Path(TM_d))]
+    for TM_f in TM_files:
+      f_path = Path(TM_root) / TM_f
+      if not is_ignored(f_path):
+        rel_path = f_path.relative_to(project_dir)
+        project_files.add(str(rel_path))
+
+  # Align the Opus file names for comparison
+  if project_opus in project_files:
+    project_files.remove(project_opus)
+    project_files.add(harmony_opus)
+  else:
+    for TM_item in list(project_files):
+      if TM_item.startswith("0pus_") and "/" not in TM_item:
+        project_files.remove(TM_item)
+
+  all_files = sorted(list(harmony_files | project_files))
+  
+  for TM_rel in all_files:
+    if TM_rel not in project_files:
+      if TM_rel == harmony_opus and not found_opus:
+        continue
+      missing_files.append(TM_rel)
+    elif TM_rel not in harmony_files:
+      added_files.append(TM_rel)
+    else:
+      h_abs = harmony_dir / TM_rel
+      p_abs = project_dir / TM_rel
+      
+      if TM_rel == harmony_opus:
+        p_abs = project_dir / project_opus
+
+      if p_abs.exists():
+        h_stat = h_abs.stat()
+        p_stat = p_abs.stat()
+        
+        h_perms = format_perms(h_stat.st_mode)
+        p_perms = format_perms(p_stat.st_mode)
+        perms_differ = (h_perms != p_perms)
+        
+        display_str = f"({h_perms}, {p_perms}) {TM_rel}" if perms_differ else TM_rel
+        content_differs = not filecmp.cmp(h_abs ,p_abs ,shallow=False)
+
+        if content_differs:
+          h_time = h_stat.st_mtime
+          p_time = p_stat.st_mtime
+          
+          if h_time > p_time:
+            mod_harmony_newer.append(display_str)
+          elif h_time < p_time:
+            mod_project_newer.append(display_str)
+          else:
+            mod_same_time.append(display_str)
+        elif perms_differ:
+          perms_only_changes.append(display_str)
+
+  # --- Output Generation ---
+  print("Skeleton Audit:")
+  print(f"    Harmony {harmony_branch}")
+  print("    vs")
+  print(f"    {project_name} {project_branch}")
+  print("=" * 60)
+
+  print("\n1. 0pus File Audit")
+  print("-" * 20)
+  if not opus_warnings:
+    print("  [OK] Opus file is correctly named and present.")
+  else:
+    for TM_w in opus_warnings:
+      print(f"  [WARNING] {TM_w}")
+
+  print("\n2. Missing from Project (In Harmony, missing locally)")
+  print("-" * 20)
+  if not missing_files:
+    print("  [OK] No Harmony skeleton files are missing.")
+  else:
+    for TM_f in missing_files:
+      print(f"  - {TM_f}")
+
+  print("\n3. Modified Skeleton Files (Diverged from Harmony)")
+  print("-" * 20)
+  if not (mod_harmony_newer or mod_same_time or mod_project_newer):
+    print("  [OK] No shared skeleton files have been modified.")
+  else:
+    if mod_harmony_newer:
+      print("  [Harmony newer]")
+      for TM_f in mod_harmony_newer:
+        print(f"    ~ {TM_f}")
+    if mod_same_time:
+      print("  [Same modification time]")
+      for TM_f in mod_same_time:
+        print(f"    ~ {TM_f}")
+    if mod_project_newer:
+      print("  [Project newer]")
+      for TM_f in mod_project_newer:
+        print(f"    ~ {TM_f}")
+
+  print("\n4. Permissions Only Changes")
+  print("-" * 20)
+  if not perms_only_changes:
+    print("  [OK] No permission-only changes detected.")
+  else:
+    for TM_f in perms_only_changes:
+      print(f"  * {TM_f}")
+
+  print("\n5. Project-Specific Files (Not in Harmony)")
+  print("-" * 20)
+  if not added_files:
+    print("  [INFO] No additional files outside the standard skeleton.")
+  else:
+    for TM_f in added_files:
+      print(f"  + {TM_f}")
+      
+  print("\n" + "=" * 60)
+  drift_count = len(opus_warnings) + len(missing_files) + len(mod_harmony_newer) + len(mod_same_time) + len(mod_project_newer) + len(perms_only_changes)
+  if drift_count == 0:
+    print("Result: Skeleton is perfectly synchronized with Harmony.")
+  else:
+    print(f"Total Structural Drift (Sections 1-4): {drift_count} issues.")
+
+  return 0
+
+if __name__ == "__main__":
+  sys.exit(CLI())
+

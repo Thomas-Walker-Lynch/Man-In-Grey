@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+
+"""
+RT-Style_header_v5_to_v6
+
+Converts RT-Style version 5 document headers to version 6.
+
+A version 5 document loads the engine through a locator file beside it:
+
+    <script src="RT-Manuscript_locator.js"></script>
+
+A version 6 document carries an inline header block instead. The block takes
+the library from the record made by opening a Manuscript directory's
+setup.html, and falls back to the Reasoning Technology server.
+
+For each version 5 .html file found, the tool replaces the locator line in
+<head> with the version 6 block, keeping its indentation. It then deletes
+RT-Manuscript_locator.js from that file's directory, unless another version 5
+document there, not converted in this run, still uses it. Any other mention of
+RT-Manuscript_locator in the file (an escaped example, prose) is logged for a
+person to edit.
+
+Usage: RT-Style_header_v5_to_v6 <command> [file ...]
+       RT-Style_header_v5_to_v6 preview <command> [file ...]
+
+  help | -h | --help   print this message (also printed when given no arguments)
+  project              walk the directory tree rooted at $REPO_HOME
+  tree                 walk the directory tree rooted at the current directory
+  local                only the current directory, no subdirectories
+  file <name> ...      only the named .html files
+  preview <command>    print the log of what <command> would do, change nothing
+
+Every directory is walked, whatever its name. Symbolic links to directories
+are not followed, so a link back up the tree cannot cause a loop or reach
+outside it.
+"""
+
+import sys ,os ,re
+from pathlib import Path
+
+LOCATOR_FILE = "RT-Manuscript_locator.js"
+V6_MARK = 'localStorage.getItem("RT.dirpr_library")'
+
+V6_BLOCK = [
+  '<script>'
+  ,'  {'
+  ,'    let dirpr_library = null;'
+  ,'    try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}'
+  ,'    window.RT = window.RT || {};'
+  ,'    RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";'
+  ,'    document.write(\'<script src="\' + RT.dirpr_library + \'/Core/RT-Manuscript_make.js"><\\/script>\');'
+  ,'  }'
+  ,'</script>'
+]
+
+LOCATOR_LINE = re.compile(
+  r'^(?P<indent>[ \t]*)<script\s+src\s*=\s*["\'](?:[^"\']*/)?RT-Manuscript_locator\.js["\']\s*>\s*</script>\s*$'
+  ,re.IGNORECASE
+)
+HEAD_END = re.compile(r'</head\s*>' ,re.IGNORECASE)
+
+
+# ---------------------------------------------------------------- log
+
+class Log:
+  def __init__(self ,preview: bool ,base: Path):
+    self.preview = preview
+    self.base = base
+    self.count = {"converted": 0 ,"deleted": 0 ,"already": 0 ,"hand": 0
+                  ,"untouched": 0 ,"stray": 0 ,"error": 0}
+
+  def rel(self ,p: Path) -> str:
+    try: return str(p.resolve().relative_to(self.base))
+    except ValueError: return str(p)
+
+  def line(self ,tag: str ,text: str):
+    print(f"  {tag:<15} {text}")
+
+  def act(self ,done: str ,would: str ,p: Path ,key: str):
+    self.line(would if self.preview else done ,self.rel(p))
+    self.count[key] += 1
+
+  def summary(self):
+    c = self.count
+    v = "would be " if self.preview else ""
+    print()
+    print("summary:")
+    print(f"  {c['converted']:>4}  .html files {v}converted to version 6")
+    print(f"  {c['deleted']:>4}  {LOCATOR_FILE} files {v}deleted")
+    print(f"  {c['already']:>4}  .html files already version 6")
+    print(f"  {c['hand']:>4}  .html files with mentions to edit by hand")
+    print(f"  {c['untouched']:>4}  other .html files left alone")
+    if c['stray']:
+      print(f"  {c['stray']:>4}  {LOCATOR_FILE} files kept (see 'kept' lines)")
+    if c['error']:
+      print(f"  {c['error']:>4}  errors")
+    if self.preview:
+      print("preview only: nothing was changed")
+
+
+# ---------------------------------------------------------------- finding files
+
+def walk(root: Path ,recursive: bool):
+  """Yields (directory ,[.html files] ,has_locator) for each directory."""
+  if not recursive:
+    entries = sorted(root.iterdir())
+    yield root ,[e for e in entries if e.is_file() and e.suffix == ".html"] ,(root / LOCATOR_FILE).is_file()
+    return
+  for d ,dirs ,files in os.walk(root):
+    dirs.sort()
+    files = sorted(files)
+    yield Path(d) ,[Path(d) / f for f in files if f.endswith(".html")] ,LOCATOR_FILE in files
+
+
+# ---------------------------------------------------------------- conversion
+
+def convert(text: str):
+  """Returns (new_text ,replaced_count ,leftover). leftover lists
+  (line_number ,line) for locator mentions that were not replaced."""
+  lines = text.split("\n")
+  out = []
+  replaced = 0
+  leftover = []
+  in_head = True
+  for n ,line in enumerate(lines ,1):
+    m = LOCATOR_LINE.match(line) if in_head else None
+    if m:
+      eol = "\r" if line.endswith("\r") else ""
+      out.extend(m.group("indent") + b + eol for b in V6_BLOCK)
+      replaced += 1
+    else:
+      out.append(line)
+      if LOCATOR_FILE.removesuffix(".js") in line:
+        leftover.append((n ,line.strip()))
+    if in_head and HEAD_END.search(line):
+      in_head = False
+  return "\n".join(out) ,replaced ,leftover
+
+def do_file(f: Path ,log: Log) -> bool:
+  """Converts one .html file. Returns True when it was version 5."""
+  try:
+    text = f.read_text(encoding="utf-8")
+  except Exception as e:
+    log.line("error" ,f"{log.rel(f)}: cannot read: {e}")
+    log.count["error"] += 1
+    return False
+
+  if V6_MARK in text and LOCATOR_FILE.removesuffix(".js") not in text:
+    log.line("already v6" ,log.rel(f))
+    log.count["already"] += 1
+    return False
+
+  new_text ,replaced ,leftover = convert(text)
+
+  if replaced:
+    if not log.preview:
+      try:
+        mode = f.stat().st_mode
+        f.write_text(new_text ,encoding="utf-8")
+        os.chmod(f ,mode)
+      except Exception as e:
+        log.line("error" ,f"{log.rel(f)}: cannot write: {e}")
+        log.count["error"] += 1
+        return False
+    log.act("converted" ,"would convert" ,f ,"converted")
+    if replaced > 1:
+      log.line("note" ,f"{log.rel(f)}: {replaced} locator lines in <head>, all replaced")
+  elif not leftover:
+    log.count["untouched"] += 1
+
+  if leftover:
+    log.count["hand"] += 1
+    for n ,line in leftover:
+      log.line("edit by hand" ,f"{log.rel(f)}:{n}: {line[:100]}")
+
+  return replaced > 0
+
+def uses_locator(f: Path) -> bool:
+  """True when f still loads the engine through a locator line in <head>."""
+  try:
+    text = f.read_text(encoding="utf-8")
+  except Exception:
+    return False
+  for line in text.split("\n"):
+    if LOCATOR_LINE.match(line): return True
+    if HEAD_END.search(line): return False
+  return False
+
+def do_locator(d: Path ,converted: set ,log: Log):
+  """Deletes d's locator unless a version 5 document not converted in this
+  run still uses it."""
+  loc = d / LOCATOR_FILE
+  users = sorted(f.name for f in d.iterdir()
+                 if f.is_file() and f.suffix == ".html"
+                 and f.resolve() not in converted and uses_locator(f))
+  if users:
+    shown = ", ".join(users[:3]) + (" ..." if len(users) > 3 else "")
+    log.line("kept" ,f"{log.rel(loc)}  (still used by {shown})")
+    log.count["stray"] += 1
+    return
+  if not log.preview:
+    try:
+      loc.unlink()
+    except Exception as e:
+      log.line("error" ,f"{log.rel(loc)}: cannot delete: {e}")
+      log.count["error"] += 1
+      return
+  log.act("deleted" ,"would delete" ,loc ,"deleted")
+
+def run_dirs(root: Path ,recursive: bool ,log: Log):
+  for d ,html ,has_locator in walk(root ,recursive):
+    converted = set()
+    for f in html:
+      if do_file(f ,log): converted.add(f.resolve())
+    if has_locator:
+      if converted:
+        do_locator(d ,converted ,log)
+      else:
+        log.line("kept" ,f"{log.rel(d / LOCATOR_FILE)}  (no version 5 document beside it)")
+        log.count["stray"] += 1
+
+def run_files(files: list[Path] ,log: Log):
+  converted = set()
+  dirs = []
+  for f in files:
+    if do_file(f ,log):
+      converted.add(f.resolve())
+      d = f.parent.resolve()
+      if d not in dirs: dirs.append(d)
+  for d in dirs:
+    if (d / LOCATOR_FILE).is_file():
+      do_locator(d ,converted ,log)
+
+
+# ---------------------------------------------------------------- command line
+
+def print_help() -> int:
+  print(__doc__.strip())
+  return 0
+
+def CLI(argv=None) -> int:
+  if argv is None:
+    argv = sys.argv[1:]
+  if not argv or argv[0] in ("help" ,"-h" ,"--help"):
+    return print_help()
+
+  preview = False
+  if argv[0] == "preview":
+    preview = True
+    argv = argv[1:]
+    if not argv:
+      print("Error: 'preview' needs a command after it.\n" ,file=sys.stderr)
+      print_help()
+      return 1
+
+  command ,rest = argv[0] ,argv[1:]
+
+  if command == "file":
+    if not rest:
+      print("Error: 'file' needs at least one file name." ,file=sys.stderr)
+      return 1
+    files = [Path(a) for a in rest]
+    for f in files:
+      if not f.is_file():
+        print(f"Error: {f} is not a file." ,file=sys.stderr)
+        return 1
+    base = Path.cwd().resolve()
+    log = Log(preview ,base)
+    print(f"RT-Style_header_v5_to_v6 {'preview ' if preview else ''}file   in {base}")
+    run_files(files ,log)
+    log.summary()
+    return 1 if log.count["error"] else 0
+
+  if rest:
+    print(f"Error: '{command}' takes no arguments." ,file=sys.stderr)
+    return 1
+
+  if command == "project":
+    repo_home = os.environ.get("REPO_HOME")
+    if not repo_home:
+      print("Error: 'project' needs REPO_HOME to be set." ,file=sys.stderr)
+      return 1
+    root ,recursive = Path(repo_home) ,True
+  elif command == "tree":
+    root ,recursive = Path.cwd() ,True
+  elif command == "local":
+    root ,recursive = Path.cwd() ,False
+  else:
+    print(f"Error: unknown command '{command}'.\n" ,file=sys.stderr)
+    print_help()
+    return 1
+
+  if not root.is_dir():
+    print(f"Error: {root} is not a directory." ,file=sys.stderr)
+    return 1
+
+  base = root.resolve()
+  log = Log(preview ,base)
+  print(f"RT-Style_header_v5_to_v6 {'preview ' if preview else ''}{command}   in {base}")
+  run_dirs(base ,recursive ,log)
+  log.summary()
+  return 1 if log.count["error"] else 0
+
+if __name__ == "__main__":
+  sys.exit(CLI())

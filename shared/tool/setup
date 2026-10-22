@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  echo "$script_afp:: This script must be sourced, not executed."
+  exit 1
+fi
+
+# without this bash takes non-matching globs literally
+shopt -s nullglob
+
+# does not presume sharing or world permissions
+umask 0077
+
+# --------------------------------------------------------------------------------
+# project definition
+
+# actual absolute directory path for this script file
+  script_adp(){
+    dirname "$script_afp"
+  }
+
+# This script is located at $REPO_HOME/shared/tool/setup.
+# Ascend two directories to discover the absolute $REPO_HOME path.
+  REPO_HOME=$(dirname "$(dirname "$(script_adp)")")
+  echo REPO_HOME "$REPO_HOME"
+
+  PROJECT=$(basename "$REPO_HOME")
+  echo PROJECT "$PROJECT"
+
+  # set the prompt decoration to the name of the project
+  PROMPT_DECOR=$PROJECT
+
+  export REPO_HOME PROJECT PROMPT_DECOR
+
+# --------------------------------------------------------------------------------
+# the following functions are provided for other scripts to use.
+# at the top of files that make use of these functions put the following line:
+#  script_afp=$(realpath "${BASH_SOURCE[0]}")
+#
+
+  ## script's filename
+  script_fn(){
+    basename "$script_afp"
+  }
+
+  ## script's file path relative to $REPO_HOME
+  script_fp(){
+    realpath --relative-to="${REPO_HOME}" "$script_afp"
+  }
+
+  ## script's dirpath relative to $REPO_HOME
+  script_dp(){
+    dirname "$(script_fp)"
+  }
+
+  export -f script_adp script_fn script_dp script_fp
+
+# --------------------------------------------------------------------------------
+# PATH & Plugin Sourcing
+#   Each addition goes to the front, so the last added is searched first.
+#   Resulting search order, most specific first:
+#     shared/authored, shared/made, shared/tool, project dependencies, the rest.
+#   The top-level setup then puts the role's tool directory in front of these.
+
+  # Project dependencies: source each .init file. Each prepends its own entries.
+  for init_file in "$REPO_HOME/shared/project-dependency/"*.init; do
+    if [[ -f "$init_file" ]]; then
+      source "$init_file"
+    fi
+  done
+
+  PATH="$REPO_HOME/shared/tool:$PATH"
+  PATH="$REPO_HOME/shared/made:$PATH"
+  PATH="$REPO_HOME/shared/authored:$PATH"
+
+  # Remove duplicates, keeping the first occurrence
+  #   Done with bash built-ins only. A pipeline through awk and sed left PATH
+  #   empty whenever either program failed to run.
+  clean_path(){
+    local entry result=""
+    local -A seen=()
+    local -a part
+    IFS=: read -r -a part <<< "$PATH"
+    for entry in "${part[@]}"; do
+      [[ -z "$entry" || -n "${seen[$entry]:-}" ]] && continue
+      seen[$entry]=1
+      result="${result:+$result:}$entry"
+    done
+    PATH="$result"
+  }
+  clean_path
+
+  export PATH
+
+# --------------------------------------------------------------------------------
+# closing
+#
+  if [[ -z "$ENV" ]]; then
+    export ENV=$(script_fp)
+  fi
