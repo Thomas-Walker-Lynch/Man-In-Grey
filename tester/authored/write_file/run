@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+# -*- mode: python; coding: utf-8; python-indent-offset: 2; indent-tabs-mode: nil -*-
+"""
+run
+
+The write_file test of Man-In-Grey's file command language. It runs the
+promoted Man_In_Grey, from $REPO_HOME/consumer, through an unblessed gate,
+with constraints it writes for the files it expects, and checks:
+
+  run_1      the stage beside this file: each composer's file written, and
+             out/obsolete.conf, made by the test beforehand, unlinked; the
+             files are compared with expected/run_1
+  run_2      the same stage again: replace_keep files kept as backups named
+             <file>.YYYYMMDDTHHMMSSZ, the replace file overwritten with no
+             backup; compared with expected/run_2
+  create     stage_create: a file opened in create mode is written once, and
+             a second run is refused by the filesystem check
+  refused    stage_refused: a journal opening one allowed file and one the
+             constraints do not allow is refused whole by the constraint check
+  argument   stage_argument: a composer giving a wrong mode fails when it
+             places the command, and no journal reaches the gate
+
+A refused run is to leave every file as it was. Backup names carry the time
+of the run, so names are compared with the time replaced by the letters
+YYYYMMDDTHHMMSSZ. Content, mode and owner are compared too.
+
+The test reads consumer/ and writes only in its scratchpad directory,
+$REPO_HOME/tester/scratchpad/write_file, where it runs Man_In_Grey.
+
+Usage: run <command>
+  help | -h | --help   print this message (also printed when given no arguments)
+  test                 run the test; the exit status is 0 only when every check passes
+  clean                delete the test's scratchpad directory
+"""
+
+import sys ,os ,re ,stat ,json ,shutil ,subprocess ,getpass
+from pathlib import Path
+
+TEST_NAME = "write_file"
+TEST_DPATH = Path(__file__).resolve().parent
+
+OUTPUT_DIR = ("out" ,"out/net" ,"out/web")
+
+# the files the constraints allow: (directory under the scratchpad, name, modes, permission)
+ALLOWED = (
+  ("out" ,"unbound_conf" ,["replace_keep"] ,"0444")
+  ,("out/net" ,"unbound.conf" ,["replace"] ,"0444")
+  ,("out/web" ,"nginx.conf" ,["replace_keep"] ,"0644")
+  ,("out" ,"obsolete.conf" ,["unlink"] ,"0644")
+  ,("out" ,"new.conf" ,["create"] ,"0600")
+)
+
+MODE = {
+  "run_1": {
+    "out/unbound_conf": 0o444
+    ,"out/net/unbound.conf": 0o444
+    ,"out/web/nginx.conf": 0o644
+  },
+  "run_2": {
+    "out/unbound_conf": 0o444
+    ,"out/unbound_conf.YYYYMMDDTHHMMSSZ": 0o444
+    ,"out/net/unbound.conf": 0o444
+    ,"out/web/nginx.conf": 0o644
+    ,"out/web/nginx.conf.YYYYMMDDTHHMMSSZ": 0o644
+  },
+}
+
+TIME_SUFFIX = re.compile(r"\.\d{8}T\d{6}Z(\.\d+)?$")
+TIME_PLACEHOLDER = ".YYYYMMDDTHHMMSSZ"
+
+
+# --------------------------------------------------------------------------------
+# the log
+
+TAG_WIDTH = 10
+
+class Log:
+  def __init__(self):
+    self.count = {"passed": 0 ,"failed": 0}
+
+  def check(self ,passed ,what ,detail=None):
+    tag = "passed" if passed else "failed"
+    self.count[tag] += 1
+    print(f"  {tag:<{TAG_WIDTH}}{what}" + (f"  ({detail})" if detail else ""))
+    return passed
+
+  def note(self ,text):
+    for line in text.splitlines():
+      print(f"  {'':<{TAG_WIDTH}}{line}")
+
+  def summary(self):
+    print("summary:")
+    print(f"  {self.count['passed']:>4}  checks passed")
+    print(f"  {self.count['failed']:>4}  checks failed")
+    return 0 if self.count["failed"] == 0 else 1
+
+
+# --------------------------------------------------------------------------------
+# the work
+
+def tree(root):
+  """
+  The files under root as {name: path}, the name relative to root with any
+  backup time replaced by the placeholder; a name met twice is listed with
+  a count, so two backups of one file are seen.
+  """
+  result = {}
+  for path in sorted(p for p in root.rglob("*") if p.is_file() or p.is_symlink()):
+    name = TIME_SUFFIX.sub(TIME_PLACEHOLDER ,path.relative_to(root).as_posix())
+    if name in result:
+      n = 2
+      while f"{name} (copy {n})" in result: n += 1
+      name = f"{name} (copy {n})"
+    result[name] = path
+  return result
+
+def snapshot(root):
+  "every file under root, by its exact name, with its content, mode and owner"
+  result = {}
+  for path in sorted(p for p in root.rglob("*") if p.is_file()):
+    st = path.lstat()
+    result[path.relative_to(root).as_posix()] = (path.read_bytes() ,stat.S_IMODE(st.st_mode) ,st.st_uid)
+  return result
+
+def compare(log ,run_name ,work_dpath):
+  expected = tree(TEST_DPATH / "expected" / run_name)
+  found = {n: p for n ,p in tree(work_dpath).items() if n.startswith("out/")}
+  for name in sorted(set(expected) | set(found)):
+    what = f"{run_name} {name}"
+    if name not in found:
+      log.check(False ,what ,"expected, not written"); continue
+    if name not in expected:
+      log.check(False ,what ,"written, not expected"); continue
+    path = found[name]
+    problem = []
+    if path.read_bytes() != expected[name].read_bytes():
+      problem.append(f"content differs from expected/{run_name}/{name}")
+    mode = stat.S_IMODE(path.lstat().st_mode)
+    want = MODE[run_name].get(name)
+    if want is not None and mode != want:
+      problem.append(f"mode {mode:04o}, expected {want:04o}")
+    if path.lstat().st_uid != os.getuid():
+      problem.append(f"owner uid {path.lstat().st_uid}, expected {os.getuid()}")
+    log.check(not problem ,what ,"; ".join(problem) or None)
+
+def run_Man_In_Grey(program ,stage ,work_dpath ,constraint_fpath):
+  command = [str(program) ,"--stage" ,str(TEST_DPATH / stage) ,"--constraints" ,str(constraint_fpath)]
+  result = subprocess.run(command ,cwd=work_dpath ,capture_output=True ,text=True)
+  return result.returncode ,(result.stdout + result.stderr).strip()
+
+def check_status(log ,what ,status ,want ,output ,want_text=None):
+  passed = status == want and (want_text is None or want_text in output)
+  detail = None
+  if status != want:
+    detail = f"exit status {status}, expected {want}"
+  elif not passed:
+    detail = f"the output does not say {want_text!r}"
+  log.check(passed ,what ,detail)
+  if not passed and output:
+    log.note(output)
+  return passed
+
+def write_constraint(work_dpath):
+  person = getpass.getuser()
+  constraint = {
+    "caller": [person]
+    ,"principal_caller": []
+    ,"file": [
+      {"directory": str(work_dpath / d) ,"name": n ,"mode": m ,"owner": person ,"permission": p}
+      for d ,n ,m ,p in ALLOWED
+    ]
+  }
+  path = work_dpath / "constraints.json"
+  path.write_text(json.dumps(constraint ,indent=2) + "\n" ,encoding="utf-8")
+  return path
+
+def test(repo_home):
+  program = repo_home / "consumer" / "Man_In_Grey" / "Man_In_Grey"
+  work_dpath = (repo_home / "tester" / "scratchpad" / TEST_NAME).resolve()
+  print(f"run test   in {TEST_DPATH}")
+  print(f"  program  {program}")
+  print(f"  writes   {work_dpath}")
+  log = Log()
+
+  if not log.check(os.access(program ,os.X_OK) ,"Man_In_Grey is promoted"
+                   ,None if os.access(program ,os.X_OK) else "the developer promotes Man_In_Grey and Man_In_Grey_file_gate first"):
+    return log.summary()
+
+  if work_dpath.exists():
+    shutil.rmtree(work_dpath)
+  for rel in OUTPUT_DIR:
+    (work_dpath / rel).mkdir(parents=True)
+  constraint_fpath = write_constraint(work_dpath)
+  (work_dpath / "out" / "obsolete.conf").write_text("to be unlinked\n")
+  out = work_dpath / "out"
+
+  # run_1 and run_2
+  for run_name in ("run_1" ,"run_2"):
+    status ,output = run_Man_In_Grey(program ,"stage" ,work_dpath ,constraint_fpath)
+    if check_status(log ,f"{run_name} Man_In_Grey exits 0" ,status ,0 ,output):
+      compare(log ,run_name ,work_dpath)
+    else:
+      log.note(f"{run_name}: the files were not compared, since Man_In_Grey failed")
+      return log.summary()
+
+  # create: once, then refused
+  status ,output = run_Man_In_Grey(program ,"stage_create" ,work_dpath ,constraint_fpath)
+  check_status(log ,"create Man_In_Grey exits 0" ,status ,0 ,output)
+  new = out / "new.conf"
+  log.check(new.is_file() and new.read_text() == "made once\n" and stat.S_IMODE(new.stat().st_mode) == 0o600
+            ,"create out/new.conf" ,None if new.is_file() else "not written")
+  before = snapshot(out)
+  status ,output = run_Man_In_Grey(program ,"stage_create" ,work_dpath ,constraint_fpath)
+  check_status(log ,"create again is refused by the filesystem check" ,status ,1 ,output ,"filesystem: refused")
+  log.check(snapshot(out) == before ,"create again changes nothing")
+
+  # a journal the constraints refuse
+  before = snapshot(out)
+  status ,output = run_Man_In_Grey(program ,"stage_refused" ,work_dpath ,constraint_fpath)
+  check_status(log ,"refused is refused by the constraint check" ,status ,1 ,output ,"constraint: refused")
+  log.check(snapshot(out) == before ,"refused changes nothing, the allowed file included")
+
+  # a composer with a wrong argument
+  before = snapshot(out)
+  status ,output = run_Man_In_Grey(program ,"stage_argument" ,work_dpath ,constraint_fpath)
+  check_status(log ,"argument fails in the composer" ,status ,2 ,output ,"wrong_mode.py: open: mode 'overwrite'")
+  log.check(snapshot(out) == before ,"argument changes nothing")
+
+  return log.summary()
+
+def clean(repo_home):
+  work_dpath = repo_home / "tester" / "scratchpad" / TEST_NAME
+  print(f"run clean   in {TEST_DPATH}")
+  if work_dpath.exists():
+    shutil.rmtree(work_dpath)
+    print(f"  deleted   {work_dpath}")
+  else:
+    print(f"  kept      {work_dpath}  (there is nothing to delete)")
+  return 0
+
+
+# --------------------------------------------------------------------------------
+# command line
+
+def print_help():
+  print(__doc__.strip())
+  return 0
+
+def CLI(argv=None):
+  if argv is None: argv = sys.argv[1:]
+  if not argv or argv[0] in ("help" ,"-h" ,"--help"): return print_help()
+  command ,rest = argv[0] ,argv[1:]
+  if command not in ("test" ,"clean"):
+    print(f"Error: unknown command '{command}'." ,file=sys.stderr)
+    print_help()
+    return 1
+  if rest:
+    print(f"Error: {command} is given no arguments." ,file=sys.stderr)
+    return 1
+  if not os.environ.get("REPO_HOME"):
+    print("Error: REPO_HOME is not set; enter the tester role with ./setup tester." ,file=sys.stderr)
+    return 1
+  repo_home = Path(os.environ["REPO_HOME"]).resolve()
+  return test(repo_home) if command == "test" else clean(repo_home)
+
+
+if __name__ == "__main__":
+  try:
+    sys.exit(CLI())
+  except BrokenPipeError:
+    os.dup2(os.open(os.devnull ,os.O_WRONLY) ,sys.stdout.fileno())
+    sys.exit(1)
