@@ -38,6 +38,8 @@ interpreter. It checks:
              gate refuses before starting the guard
   silent     orchestrate composer/config.py through an interpreter that exits 0 without
              writing its verdict line: the gate reports the run failed
+  channel    orchestrate composer_channel/channel.py, whose result is a descriptor: the
+             orchestrator prints it as <descriptor>
 
 and, with journals made without the journal interface and given to the gate
 directly, as a program other than the orchestrator could:
@@ -54,6 +56,15 @@ directly, as a program other than the orchestrator could:
   version    a journal of version 3: the guard cannot read it
   discarded  a journal whose result the gate cannot hand back, since the program
              invoking it left descriptor 3 closed: played, and the result discarded
+  descriptor a journal whose result is the reading end of a pipe, given through
+             Man_In_Grey.admit as an application would: the descriptor comes back
+             open, in its place in the result, and reads what the interpreter wrote
+  pipe       the same journal given to the gate with descriptor 3 a pipe, over which
+             no descriptor can travel: played, and the result reported lost
+  closed     the same journal with descriptor 3 closed: played, and the result,
+             with its descriptor, discarded
+  oversize   a channel of more content than a pipe holds with no reader: refused
+             by the guard's language check
 
 A refused run is to leave every file as it was. Backup names carry the time
 of the run, so names are compared with the time replaced by the letters
@@ -193,10 +204,48 @@ def run__Man_In_Grey(fpa__program ,filep__composer ,dirpa__work ,*option ,preexe
   result = subprocess.run(command ,cwd=dirpa__work ,capture_output=True ,text=True ,preexec_fn=preexec)
   return result.returncode ,(result.stdout + result.stderr).strip()
 
-def run_gate(fpa__gate ,journal_bytes):
-  "a journal given to the gate directly, with no orchestrator and descriptor 3 closed"
-  result = subprocess.run([str(fpa__gate) ,"admit"] ,input=journal_bytes ,capture_output=True)
+def run_gate(fpa__gate ,journal_bytes ,preexec=None):
+  "a journal given to the gate directly, with no orchestrator and descriptor 3 closed unless preexec opens it"
+  # subprocess closes every inherited descriptor above 2 after preexec runs, unless told not to
+  result = subprocess.run([str(fpa__gate) ,"admit"] ,input=journal_bytes ,capture_output=True
+                          ,preexec_fn=preexec ,close_fds=preexec is None)
   return result.returncode ,(result.stdout + result.stderr).decode("utf-8" ,"replace").strip()
+
+# Run in a process of its own, so that what the gate writes is captured: give
+# the journal on standard input to Man_In_Grey.admit, as an application that
+# is its own orchestrator does, then decode the result with the descriptors
+# that came, read the descriptor the result holds, and print what was found as
+# one JSON line.
+ADMIT_PROGRAM = """
+import sys ,os ,json
+sys.path.insert(0 ,sys.argv[1])
+import Man_In_Grey ,Journal
+status ,result ,list__fd = Man_In_Grey.admit(sys.argv[2] ,sys.stdin.buffer.read())
+type_name ,value = Journal.decode_result(result ,list__fd)
+content = b""
+while True:
+  part = os.read(value ,1 << 12)
+  if not part: break
+  content += part
+os.close(value)
+print(json.dumps({"status": status ,"count_of__fd": len(list__fd) ,"type": type_name ,"content": content.decode()}))
+"""
+
+def run_admit(dirpa__program ,fpa__gate ,journal_bytes):
+  result = subprocess.run([sys.executable ,"-I" ,"-c" ,ADMIT_PROGRAM ,str(dirpa__program) ,str(fpa__gate)]
+                          ,input=journal_bytes ,capture_output=True)
+  output = (result.stdout + result.stderr).decode("utf-8" ,"replace").strip()
+  last = result.stdout.decode("utf-8" ,"replace").strip().splitlines()[-1:] or [""]
+  try:
+    found = json.loads(last[0])
+  except ValueError:
+    found = None
+  return result.returncode ,found ,output
+
+def give_pipe_as_result_descriptor():
+  "run in the child before the gate starts: a pipe at descriptor 3, as an older admit gave"
+  fd__read ,fd__write = os.pipe()
+  os.dup2(fd__write ,3)
 
 def hand_made(definition_hash ,variable ,list__instruction ,result=None ,version=4):
   "a journal of the Smoke language, made as data and encoded, with no journal interface to check it"
@@ -405,6 +454,27 @@ def test(dirpa__repo_home):
     log.check(snapshot(out) == before ,f"{name} changes nothing")
   status ,output = run_gate(fpa__gate ,hand_made(definition_hash ,[["s" ,"summary"]] ,[("summary" ,[["variable" ,"s"]])] ,result="s"))
   check_status(log ,"discarded is played, its result discarded" ,status ,0 ,output ,"result-discarded:")
+
+  # a descriptor handed back
+  status ,output = run__Man_In_Grey(fpa__program ,DIRPA__TEST / "composer_channel" / "channel.py" ,dirpa__work)
+  check_status(log ,"channel is played, its result printed as a descriptor" ,status ,0 ,output ,"result: channel <descriptor>")
+  content = "through the gate\n"
+  journal__channel = hand_made(definition_hash ,[["c" ,"channel"]] ,[("channel" ,[["literal" ,content.encode()] ,["variable" ,"c"]])] ,result="c")
+  status ,found ,output = run_admit(fpa__program.parent ,fpa__gate ,journal__channel)
+  want = {"status": 0 ,"count_of__fd": 1 ,"type": "channel" ,"content": content}
+  log.check(status == 0 and found == want ,"descriptor comes back open, in its place, and reads what was written"
+            ,None if found == want else f"found {found!r}")
+  if found != want and output:
+    log.note(output)
+  log.check("result-forwarded: " in output and "and 1 descriptors on descriptor 3" in output
+            ,"descriptor is reported forwarded by the gate")
+  status ,output = run_gate(fpa__gate ,journal__channel ,preexec=give_pipe_as_result_descriptor)
+  check_status(log ,"pipe is played, its result reported lost" ,status ,0 ,output ,"descriptor 3 is not a Unix socket")
+  status ,output = run_gate(fpa__gate ,journal__channel)
+  check_status(log ,"closed is played, its result and descriptor discarded" ,status ,0 ,output ,"and 1 descriptors; descriptor 3 was not open")
+  oversize = hand_made(definition_hash ,[["c" ,"channel"]] ,[("channel" ,[["literal" ,b"x" * 4097] ,["variable" ,"c"]])] ,result="c")
+  status ,output = run_gate(fpa__gate ,oversize)
+  check_status(log ,"oversize is refused" ,status ,1 ,output ,"4097 bytes of content; a channel holds at most 4096")
 
   return log.summary()
 

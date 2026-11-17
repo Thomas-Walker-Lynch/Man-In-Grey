@@ -25,7 +25,8 @@ LIST__CHECK:
 
   language     the values of the literals: absolute directories in normal
                form, bare file names, a known mode, an account name, a
-               permission from 0 to 0o7777
+               permission from 0 to 0o7777, and a channel's content no
+               larger than CHANNEL_MAX
   constraint   the predicates at the top of the guard, Smoke·Guard.py:
                is__allowed_account, is__allowed_open and is__allowed_unlink
   validity     every owner is an account
@@ -44,6 +45,7 @@ import os ,pwd ,stat
 from Journal import has__control ,clean
 
 MODE = ("create" ,"replace" ,"replace-keep")
+CHANNEL_MAX = 4096   # PIPE_BUF: a pipe holds at least this much with no reader
 
 
 # --------------------------------------------------------------------------------
@@ -92,6 +94,8 @@ def check_language(list__instruction_view ,data ,constraint ,gate_invoking_accou
       if problem: list__problem.append(f"@{view.index} open: {problem}")
       if not 0 <= value[4] <= 0o7777:
         list__problem.append(f"@{view.index} open: permission {value[4]} is not from 0 to 0o7777")
+    if name == "channel" and len(value[0]) > CHANNEL_MAX:
+      list__problem.append(f"@{view.index} channel: {len(value[0])} bytes of content; a channel holds at most {CHANNEL_MAX}")
   return list__problem
 
 def check_constraint(list__instruction_view ,data ,constraint ,gate_invoking_account):

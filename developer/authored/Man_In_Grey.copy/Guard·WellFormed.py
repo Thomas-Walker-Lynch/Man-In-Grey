@@ -96,8 +96,8 @@ class Scan:
       if kind == "literal":
         if direction != "in":
           list__problem.append(f"{at}: a literal is given where the format writes ({direction})"); continue
-        if definition.is__handle_holder(type_name):
-          list__problem.append(f"{at}: the type {type_name} holds a handle, which only an instruction produces, never a literal"); continue
+        if definition.is__produced_holder(type_name):
+          list__problem.append(f"{at}: the type {type_name} holds a handle or a descriptor, which only an instruction produces, never a literal"); continue
         problem = definition.value_problem(payload ,type_name ,"the literal")
         if problem:
           list__problem.append(f"{at}: {clean(problem)}, as the type {type_name} requires"); continue

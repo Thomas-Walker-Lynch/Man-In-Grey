@@ -7,7 +7,7 @@
 temp.*
 **/scratchpad/*
 !**/scratchpad/.gitignore
-
+*.patch
 
 # Python
 __pycache__/

@@ -72,6 +72,23 @@ class LibraryInstruction:
   def summary(self ,summary):
     summary.append({"count_of__open": len(self._opened) ,"count_of__unlink": self._count_of__unlink})
 
+  def channel(self ,content ,channel):
+    """
+    A pipe holding content, its writing end closed; the reading end is
+    written to channel. The guard keeps content within what a pipe holds
+    with no reader, so the write cannot wait. The reading end is not closed
+    here: when the journal's result holds it, Interpreter.write_result
+    sends it to the gate and closes it.
+    """
+    fd__read ,fd__write = os.pipe()
+    try:
+      view = memoryview(content)
+      while view:
+        view = view[os.write(fd__write ,view):]
+    finally:
+      os.close(fd__write)
+    channel.append(fd__read)
+
   def finish(self):
     for record in self._opened:
       dirfd ,fd ,tmp ,filen__target = record["dirfd"] ,record["fd"] ,record["tmp"] ,record["name"]

@@ -12,7 +12,8 @@ The gate logs the journal's course itself.
 
 When it has played the whole journal, it writes the journal's result, when
 the journal declares one, to descriptor 3, which the gate gives it: a CBOR
-map of the result's type name and value. Then it writes one line to
+map of the result's type name and value, with any descriptors it holds sent
+beside it; see Interpreter.write_result. Then it writes one line to
 standard output,
 
   interpreter Smoke journal played
@@ -81,15 +82,6 @@ except ImportError as error:
   sys.exit(2)
 
 
-RESULT_FD = 3
-
-def write_result(result):
-  "the encoded result, all of it, on descriptor 3, which is then closed"
-  view = memoryview(result)
-  while view:
-    view = view[os.write(RESULT_FD ,view):]
-  os.close(RESULT_FD)
-
 def log(tag ,message):
   print(f"{tag}: {Journal.clean(message)}" ,file=sys.stderr ,flush=True)
 
@@ -104,14 +96,14 @@ def execute():
   except Language.DefinitionError as error:
     log("cannot-execute" ,str(error))
     return 2
-  status ,result = Interpreter.interpret(sys.stdin.buffer.read() ,language_definition ,library_instruction ,log ,guard_program ,gate_invoking_account)
+  status ,result ,list__fd = Interpreter.interpret(sys.stdin.buffer.read() ,language_definition ,library_instruction ,log ,guard_program ,gate_invoking_account)
   if status != 0:
     return status
   if result is not None:
     try:
-      write_result(result)
+      Interpreter.write_result(result ,list__fd)
     except OSError as error:
-      log("cannot-return-result" ,f"descriptor {RESULT_FD}: {error.strerror}")
+      log("cannot-return-result" ,f"descriptor {Interpreter.RESULT_FD}: {error.strerror}")
       return 2
   sys.stdout.write("interpreter Smoke journal played\n")
   return 0

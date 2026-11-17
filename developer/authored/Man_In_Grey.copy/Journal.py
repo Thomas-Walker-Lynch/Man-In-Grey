@@ -28,6 +28,11 @@ be mistaken for a variable.
 
 This module decodes a journal into its data, checking only the shape every
 journal has; prints a journal; and encodes and decodes the result record.
+
+A result record can stand for open descriptors, which travel beside its bytes
+as SCM_RIGHTS: each is the CBOR tag Language.TAG__DESCRIPTOR holding its
+position among them. decode_result is given the descriptors received and puts
+each in its place.
 The well-formed guard, Guard·WellFormed.py, checks a journal against its
 language definition; Journal·Interface.py is the composer's side.
 
@@ -37,6 +42,8 @@ bytes, never code.
 """
 
 import cbor2
+
+from Language import TAG__DESCRIPTOR
 
 JOURNAL_VERSION = 4
 LIST__ENTRY = ("version" ,"instruction_language" ,"definition_hash" ,"meta" ,"list__variable" ,"result" ,"list__instruction")
@@ -126,12 +133,36 @@ def encode_result(type_name ,value):
   "the record an interpreter writes on descriptor 3: the result's type name and its value"
   return cbor2.dumps({"type": type_name ,"value": value} ,canonical=True)
 
-def decode_result(result_bytes):
-  "the (type name ,value) of a result record. Raises JournalError."
+def decode_result(result_bytes ,list__fd=()):
+  """
+  The (type name ,value) of a result record, with each descriptor tag
+  replaced by the descriptor list__fd holds at its position: the descriptors
+  received beside the record, in the order they came. Every descriptor
+  received is to be named by exactly one tag. Raises JournalError; the
+  descriptors stay open either way, and closing them is the caller's.
+  """
   try:
     data = cbor2.loads(result_bytes)
   except Exception as error:
     raise JournalError(f"the result is not valid CBOR: {error}")
   if type(data) is not dict or set(data) != {"type" ,"value"} or type(data["type"]) is not str:
     raise JournalError("the result is not {\"type\": <type name> ,\"value\": <value>}")
-  return data["type"] ,data["value"]
+  list__used = []
+  def place(value):
+    if type(value) is cbor2.CBORTag:
+      if value.tag != TAG__DESCRIPTOR:
+        raise JournalError(f"the result holds the CBOR tag {value.tag}, which Man-In-Grey does not use")
+      position = value.value
+      if type(position) is not int or not 0 <= position < len(list__fd) or position in list__used:
+        raise JournalError(f"the result names descriptor {clean(repr(position))}, and {len(list__fd)} came beside it")
+      list__used.append(position)
+      return list__fd[position]
+    if type(value) is list:
+      return [place(element) for element in value]
+    if type(value) is dict:
+      return {key: place(element) for key ,element in value.items()}
+    return value
+  value = place(data["value"])
+  if len(list__used) != len(list__fd):
+    raise JournalError(f"{len(list__fd)} descriptors came beside the result, and it names {len(list__used)}")
+  return data["type"] ,value

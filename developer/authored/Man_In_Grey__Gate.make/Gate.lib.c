@@ -41,11 +41,16 @@
        line to standard output: interpreter <language> journal played;
     7. forwards the interpreter's result, what it wrote on its descriptor 3,
        to the gate's own descriptor 3, and only once the journal is taken as
-       played.
+       played: the bytes, and the open descriptors sent beside them.
 
-  The guard is given no descriptor 3. The interpreter's descriptor 3 is a
-  pipe to the gate, which the gate reads as it reads the interpreter's other
-  output, up to RESULT_MAX bytes, and never examines.
+  The guard is given no descriptor 3. The interpreter's descriptor 3 is one
+  end of a Unix socket pair whose other end the gate holds. The gate reads it
+  as it reads the interpreter's other output, up to RESULT_MAX bytes, and
+  never examines the bytes. The interpreter can send open descriptors beside
+  them, as SCM_RIGHTS, up to DESCRIPTOR_MAX; the gate keeps them, and hands
+  them on with the bytes. Descriptors can travel only over a Unix socket, so
+  a result that holds any is handed back only when the gate's own
+  descriptor 3 is one; a result of bytes alone goes through a pipe too.
 
   The guard and the interpreter inherit the gate's uids and its ignored
   signals, and learn account A from MIG__REAL_UID and MIG__REAL_USER_NAME.
@@ -94,6 +99,7 @@ int Man_In_Grey__Gate·Gate·run(
   #include <string.h>
   #include <sys/prctl.h>
   #include <sys/resource.h>
+  #include <sys/socket.h>
   #include <sys/stat.h>
   #include <sys/time.h>
   #include <sys/types.h>
@@ -107,6 +113,7 @@ int Man_In_Grey__Gate·Gate·run(
   #define COUNT_OF__OUTPUT_LINE__MAX 2000
   #define VERDICT_MAX 512
   #define RESULT_MAX ((size_t)16 << 20)
+  #define DESCRIPTOR_MAX 16
   #define RESULT_FD 3
 
   Local const char *Language = "";
@@ -342,6 +349,8 @@ int Man_In_Grey__Gate·Gate·run(
     unsigned char *result;
     size_t result_length;
     size_t result_size;
+    int list__descriptor[DESCRIPTOR_MAX];   // sent beside the result, kept close-on-exec
+    size_t count_of__descriptor;
     size_t count_of__line;
     const char *broken;      // the rule broken, or NULL
   } Child;
@@ -392,6 +401,41 @@ int Man_In_Grey__Gate·Gate·run(
     child->result_length += n;
   }
 
+  /* Read the interpreter's result socket: bytes into buffer, and every
+     descriptor sent beside them as SCM_RIGHTS into the child's list. The
+     kernel opens a received descriptor in this process; MSG_CMSG_CLOEXEC
+     keeps it from any program the gate starts. One past DESCRIPTOR_MAX
+     breaks the gate's rules, and MSG_CTRUNC, the kernel saying it dropped
+     descriptors there was no room for, does too. */
+  Local ssize_t receive_result(Child *child ,int fd ,char *buffer ,size_t size){
+    union{ struct cmsghdr align; char space[CMSG_SPACE(sizeof(int) * DESCRIPTOR_MAX)]; } control;
+    struct iovec iov = {.iov_base = buffer ,.iov_len = size};
+    struct msghdr message = {.msg_iov = &iov ,.msg_iovlen = 1 ,.msg_control = control.space ,.msg_controllen = sizeof control.space};
+    ssize_t n = recvmsg(fd ,&message ,MSG_CMSG_CLOEXEC);
+    if( n < 0 ) return n;
+    for(struct cmsghdr *c = CMSG_FIRSTHDR(&message); c; c = CMSG_NXTHDR(&message ,c)){
+      if( c->cmsg_level != SOL_SOCKET || c->cmsg_type != SCM_RIGHTS ) continue;
+      size_t count = (c->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+      for(size_t i = 0; i < count; ++i){
+        int received;
+        memcpy(&received ,CMSG_DATA(c) + i * sizeof(int) ,sizeof received);
+        if( child->count_of__descriptor == DESCRIPTOR_MAX ){
+          close(received);
+          child->broken = "more descriptors beside its result than the gate accepts";
+          continue;
+        }
+        child->list__descriptor[child->count_of__descriptor++] = received;
+      }
+    }
+    if( message.msg_flags & MSG_CTRUNC ) child->broken = "more descriptors beside its result than the gate accepts";
+    return n;
+  }
+
+  Local void close_descriptor(Child *child){
+    for(size_t i = 0; i < child->count_of__descriptor; ++i) close(child->list__descriptor[i]);
+    child->count_of__descriptor = 0;
+  }
+
   Local void close_on_exec(int fd){
     int flags = fcntl(fd ,F_GETFD);
     if( flags < 0 || fcntl(fd ,F_SETFD ,flags | FD_CLOEXEC) < 0 ) die("cannot set close-on-exec: %s" ,strerror(errno));
@@ -403,7 +447,7 @@ int Man_In_Grey__Gate·Gate·run(
   Local int run_child(Child *child ,char *const argument[] ,const unsigned char *input ,size_t input_length){
     int in[2] ,out[2] ,err[2] ,res[2] = {-1 ,-1};
     if( pipe(in) || pipe(out) || pipe(err) ) die("cannot make a pipe: %s" ,strerror(errno));
-    if( child->has__result && pipe(res) ) die("cannot make a pipe: %s" ,strerror(errno));
+    if( child->has__result && socketpair(AF_UNIX ,SOCK_STREAM ,0 ,res) ) die("cannot make a socket pair: %s" ,strerror(errno));
     for(int k = 0; k < 2; ++k){
       close_on_exec(in[k]); close_on_exec(out[k]); close_on_exec(err[k]);
       if( child->has__result ) close_on_exec(res[k]);
@@ -447,7 +491,7 @@ int Man_In_Grey__Gate·Gate·run(
       }
       if( res_at >= 0 && list__poll[res_at].revents ){
         char buffer[4096];
-        ssize_t n = read(res_fd ,buffer ,sizeof buffer);
+        ssize_t n = receive_result(child ,res_fd ,buffer ,sizeof buffer);
         if( n > 0 ) take_result(child ,buffer ,(size_t)n);
         else if( n == 0 || (errno != EAGAIN && errno != EINTR) ){ close(res_fd); res_fd = -1; }
       }
@@ -469,7 +513,7 @@ int Man_In_Grey__Gate·Gate·run(
       }
     }
 
-    if( child->broken ) kill(pid ,SIGKILL);
+    if( child->broken ){ kill(pid ,SIGKILL); close_descriptor(child); }
     if( in_fd >= 0 ) close(in_fd);
     if( res_fd >= 0 ) close(res_fd);
     if( out_stream.fd >= 0 ) close(out_stream.fd);
@@ -496,6 +540,7 @@ int Man_In_Grey__Gate·Gate·run(
       "  check-only           run the guard and not the interpreter\n"
       "A journal that declares a result has it written to descriptor 3 once the\n"
       "journal is played; when descriptor 3 is not open, the result is discarded.\n"
+      "A result holding descriptors needs descriptor 3 to be a Unix socket.\n"
       ,program
     );
   }
@@ -558,19 +603,45 @@ int Man_In_Grey__Gate·Gate·run(
     return true;
   }
 
+  Local void wait_writable(void){
+    struct pollfd p = {.fd = RESULT_FD ,.events = POLLOUT};
+    poll(&p ,1 ,-1);
+  }
+
   /* Write the result to descriptor 3, all of it, waiting while the
-     invoking program's end of it is full. Returns false when it cannot. */
-  Local bool forward_result(const unsigned char *result ,size_t length){
+     invoking program's end of it is full. Descriptors go with the first
+     bytes, as SCM_RIGHTS, so descriptor 3 has to be a Unix socket when there
+     are any; when it is not, nothing is written and errno is ENOTSOCK.
+     Returns false when it cannot. */
+  Local bool forward_result(const unsigned char *result ,size_t length ,const int *list__descriptor ,size_t count){
     size_t written = 0;
+    if( count > 0 ){
+      struct stat st;
+      if( fstat(RESULT_FD ,&st) != 0 ) return false;
+      if( !S_ISSOCK(st.st_mode) ){ errno = ENOTSOCK; return false; }
+      union{ struct cmsghdr align; char space[CMSG_SPACE(sizeof(int) * DESCRIPTOR_MAX)]; } control;
+      memset(&control ,0 ,sizeof control);
+      struct iovec iov = {.iov_base = (void *)result ,.iov_len = length};
+      struct msghdr message = {.msg_iov = &iov ,.msg_iovlen = 1 ,.msg_control = control.space
+                               ,.msg_controllen = CMSG_SPACE(sizeof(int) * count)};
+      struct cmsghdr *c = CMSG_FIRSTHDR(&message);
+      c->cmsg_level = SOL_SOCKET;
+      c->cmsg_type = SCM_RIGHTS;
+      c->cmsg_len = CMSG_LEN(sizeof(int) * count);
+      memcpy(CMSG_DATA(c) ,list__descriptor ,sizeof(int) * count);
+      for(;;){
+        ssize_t n = sendmsg(RESULT_FD ,&message ,MSG_NOSIGNAL);
+        if( n > 0 ){ written = (size_t)n; break; }
+        if( n < 0 && errno == EINTR ) continue;
+        if( n < 0 && errno == EAGAIN ){ wait_writable(); continue; }
+        return false;
+      }
+    }
     while( written < length ){
       ssize_t n = write(RESULT_FD ,result + written ,length - written);
       if( n > 0 ){ written += (size_t)n; continue; }
       if( n < 0 && errno == EINTR ) continue;
-      if( n < 0 && errno == EAGAIN ){
-        struct pollfd p = {.fd = RESULT_FD ,.events = POLLOUT};
-        poll(&p ,1 ,-1);
-        continue;
-      }
+      if( n < 0 && errno == EAGAIN ){ wait_writable(); continue; }
       return false;
     }
     return true;
@@ -732,13 +803,17 @@ int Man_In_Grey__Gate·Gate·run(
     }
     say("interpreted" ,"interpreter %s journal played" ,language);
     if( interpreter.result_length > 0 ){
+      size_t count = interpreter.count_of__descriptor;
       if( Result_discarded )
-        say("result-discarded" ,"%zu bytes; descriptor 3 was not open" ,interpreter.result_length);
-      else if( forward_result(interpreter.result ,interpreter.result_length) )
-        say("result-forwarded" ,"%zu bytes on descriptor 3" ,interpreter.result_length);
+        say("result-discarded" ,"%zu bytes and %zu descriptors; descriptor 3 was not open" ,interpreter.result_length ,count);
+      else if( forward_result(interpreter.result ,interpreter.result_length ,interpreter.list__descriptor ,count) )
+        say("result-forwarded" ,"%zu bytes and %zu descriptors on descriptor 3" ,interpreter.result_length ,count);
+      else if( errno == ENOTSOCK )
+        say("result-lost" ,"%zu bytes and %zu descriptors; descriptor 3 is not a Unix socket, which descriptors need" ,interpreter.result_length ,count);
       else
-        say("result-lost" ,"%zu bytes; descriptor 3 cannot be written: %s" ,interpreter.result_length ,strerror(errno));
+        say("result-lost" ,"%zu bytes and %zu descriptors; descriptor 3 cannot be written: %s" ,interpreter.result_length ,count ,strerror(errno));
     }
+    close_descriptor(&interpreter);
     return 0;
   }
 

@@ -37,7 +37,10 @@ The composer, and every directory from / down to it, is to be owned by the
 gate invoking account or by root, and writable by no other account. A
 composer that is a symbolic link is refused.
 
-A result is printed as one line, result: <type name> <value>.
+A result is printed as one line, result: <type name> <value>. A descriptor
+the result holds is shown as <descriptor>, and closed, as the orchestrator
+has no use for it; an application that is its own orchestrator calls admit
+and keeps it.
 
 Exit status: 0 when the run did what it was asked; 1 when the guard refused
 the journal or an instruction failed to execute; 2 when the run could not start,
@@ -47,7 +50,7 @@ the composer failed, or the gate, guard or interpreter could not run.
 import sys ,os
 sys.dont_write_bytecode = True
 
-import datetime ,importlib ,pwd ,re ,runpy ,shlex ,stat ,subprocess ,traceback
+import datetime ,importlib ,pwd ,re ,runpy ,shlex ,socket ,stat ,subprocess ,traceback
 from pathlib import Path
 
 import Language
@@ -196,26 +199,43 @@ def compose(prov ,language_definition):
   return journal
 
 RESULT_FD = 3
+DESCRIPTOR_MAX = 16   # the most the gate hands back beside a result, as in Gate.lib.c
 
 def admit(fpa__gate ,journal_bytes ,check_only=False):
   """
   Invoke the gate with the journal on its standard input, and descriptor 3
   open to receive the result. The gate's standard output and standard error
-  are this process's. Returns (status ,result), where result is the bytes
-  the gate wrote on descriptor 3, empty when there was none.
+  are this process's. Returns (status ,result ,list__fd), where result is
+  the bytes the gate wrote on descriptor 3, empty when there was none, and
+  list__fd the open descriptors that came beside them, in the order they
+  came. Journal.decode_result(result ,list__fd) puts each in its place in
+  the result's value; closing them is the caller's.
+
+  Descriptor 3 is one end of a Unix socket pair, which exists only as the
+  two descriptors, with no file on disk. Over a pipe only bytes travel; over
+  a Unix socket the kernel also passes open descriptors, as SCM_RIGHTS,
+  opening each again in the receiving process under a number of its own.
 
   An application that is its own orchestrator calls this function with the
   journal it made.
   """
   command = [str(fpa__gate) ,"admit"] + (["check-only"] if check_only else [])
-  read_fd ,write_fd = os.pipe()
+  socket__gate ,socket__here = socket.socketpair(socket.AF_UNIX ,socket.SOCK_STREAM)
+  fd__gate = socket__gate.fileno()
+  def give_result_descriptor():
+    # Runs in the child, before the gate starts. Python makes descriptors
+    # close-on-exec; dup2 gives descriptor 3 without that mark, except onto
+    # itself, which changes nothing, so that case is marked inheritable.
+    if fd__gate == RESULT_FD:
+      os.set_inheritable(RESULT_FD ,True)
+    else:
+      os.dup2(fd__gate ,RESULT_FD)
   try:
-    gate = subprocess.Popen(command ,stdin=subprocess.PIPE ,close_fds=False
-                            ,preexec_fn=lambda: os.dup2(write_fd ,RESULT_FD))
+    gate = subprocess.Popen(command ,stdin=subprocess.PIPE ,close_fds=False ,preexec_fn=give_result_descriptor)
   except BaseException:
-    os.close(read_fd); os.close(write_fd)
+    socket__gate.close(); socket__here.close()
     raise
-  os.close(write_fd)
+  socket__gate.close()
   try:
     gate.stdin.write(journal_bytes)
   except BrokenPipeError:
@@ -225,21 +245,33 @@ def admit(fpa__gate ,journal_bytes ,check_only=False):
       gate.stdin.close()
     except BrokenPipeError:
       pass
-  list__part = []
-  with os.fdopen(read_fd ,"rb") as result:
+  list__part ,list__fd = [] ,[]
+  with socket__here:
     while True:
-      part = result.read(1 << 16)
+      part ,list__received ,_ ,_ = socket.recv_fds(socket__here ,1 << 16 ,DESCRIPTOR_MAX ,socket.MSG_CMSG_CLOEXEC)
+      list__fd.extend(list__received)
       if not part: break
       list__part.append(part)
-  return gate.wait() ,b"".join(list__part)
+  return gate.wait() ,b"".join(list__part) ,list__fd
 
-def print_result(result_bytes ,file=None):
-  "one line, result: <type name> <value>, with bytes shown by their count"
+class DescriptorShown:
+  "stands in a printed result where a descriptor came"
+  def __repr__(self):
+    return "<descriptor>"
+
+def print_result(result_bytes ,list__fd=() ,file=None):
+  """
+  One line, result: <type name> <value>, with bytes shown by their count
+  and each descriptor as <descriptor>. The descriptors are closed.
+  """
   try:
-    type_name ,value = Journal.decode_result(result_bytes)
+    type_name ,value = Journal.decode_result(result_bytes ,[DescriptorShown() for _ in list__fd])
   except Journal.JournalError as error:
     print(f"error: {error}" ,file=sys.stderr)
     return False
+  finally:
+    for fd in list__fd:
+      os.close(fd)
   shown = f"<{len(value)} bytes>" if type(value) is bytes else repr(value)
   print(f"result: {type_name} {shown}" ,file=file or sys.stdout)
   return True
@@ -260,9 +292,11 @@ def orchestrate(filep__composer ,gate ,flag):
   if "compose-only" in flag:
     return 0
   sys.stdout.flush()
-  status ,result = admit(fpa__gate ,journal.encode() ,"check-only" in flag)
-  if result and not print_result(result):
+  status ,result ,list__fd = admit(fpa__gate ,journal.encode() ,"check-only" in flag)
+  if result and not print_result(result ,list__fd):
     return 2
+  for fd in ([] if result else list__fd):
+    os.close(fd)
   return status
 
 

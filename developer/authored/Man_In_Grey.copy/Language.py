@@ -24,9 +24,21 @@ it was composed against.
                 operation specifier is also the name of the function that
                 carries out the instruction.
 
-The primitives are text, integer, bytes, boolean and handle. A handle is a
-value an instruction produces for later instructions, such as an open file:
-no literal can be a handle, and no result can hold one.
+The primitives are text, integer, bytes, boolean, handle and descriptor.
+Two of them are values only an instruction produces, so no literal can be
+one:
+
+  handle       a value an instruction produces for later instructions, such
+               as an open file; it means nothing outside the interpreter, so
+               no result can hold one
+  descriptor   an open file descriptor an instruction produces, which a
+               result can hold: the interpreter sends it to the gate beside
+               the result's bytes, as SCM_RIGHTS over a Unix socket, and the
+               gate hands it on to whoever invoked it. The descriptor's number
+               means nothing in another process, so in the encoded result each
+               descriptor is the CBOR tag TAG__DESCRIPTOR holding its position
+               among the descriptors sent; descriptor_mark makes that form,
+               and Journal.decode_result puts the received descriptors back
 
 Types are compared by name. A variable of the type short_name is not a
 variable of the type text, even when short_name is declared as text, so a
@@ -43,7 +55,13 @@ import hashlib ,keyword
 
 import cbor2
 
-LIST__PRIMITIVE = ("text" ,"integer" ,"bytes" ,"boolean" ,"handle")
+LIST__PRIMITIVE = ("text" ,"integer" ,"bytes" ,"boolean" ,"handle" ,"descriptor")
+LIST__PRIMITIVE__PRODUCED = ("handle" ,"descriptor")   # never a literal
+
+# The CBOR tag that stands for a descriptor in an encoded result: the bytes of
+# "MIG" read as a number. A tag is part of CBOR's structure, never of a value's
+# content, so no text or bytes in a result can be taken for one.
+TAG__DESCRIPTOR = 0x4D4947
 LIST__COMPOUND = ("dictionary" ,"list")
 LIST__DIRECTION = ("in" ,"out" ,"in-out")
 LIST__SECTION = ("list__type" ,"list__format" ,"list__result" ,"map__instruction")
@@ -98,15 +116,19 @@ def _type_expression__problem(expression ,map__type ,where):
     return None
   return f"{where}: {head!r} is not a compound type; the compounds are {', '.join(LIST__COMPOUND)}"
 
-def _is__handle_holder(expression ,map__type):
-  "True when the type expression is, or holds, a handle"
+def _is__holder(expression ,map__type ,set__primitive):
+  "True when the type expression is, or holds, one of the primitives in set__primitive"
   if type(expression) is str:
-    if expression == "handle": return True
-    if expression in map__type: return _is__handle_holder(map__type[expression] ,map__type)
+    if expression in set__primitive: return True
+    if expression in map__type: return _is__holder(map__type[expression] ,map__type ,set__primitive)
     return False
   if expression[0] == "list":
-    return _is__handle_holder(expression[1] ,map__type)
-  return any(_is__handle_holder(entry[1] ,map__type) for entry in expression[1:])
+    return _is__holder(expression[1] ,map__type ,set__primitive)
+  return any(_is__holder(entry[1] ,map__type ,set__primitive) for entry in expression[1:])
+
+def _is__handle_holder(expression ,map__type):
+  "True when the type expression is, or holds, a handle"
+  return _is__holder(expression ,map__type ,("handle",))
 
 def list__problem_language(data):
   "every problem with a language definition, as a list of messages; empty when it is well formed"
@@ -220,6 +242,31 @@ class Definition:
   def is__handle_holder(self ,type_name):
     return _is__handle_holder(type_name ,self._map__type)
 
+  def is__produced_holder(self ,type_name):
+    "True when the type is, or holds, a value only an instruction produces, a handle or a descriptor"
+    return _is__holder(type_name ,self._map__type ,LIST__PRIMITIVE__PRODUCED)
+
+  def descriptor_mark(self ,value ,expression):
+    """
+    (marked ,list__fd) for a value of the type expression, already checked
+    by value_problem: marked is the value with each descriptor replaced by
+    the CBOR tag TAG__DESCRIPTOR holding its position in list__fd, and
+    list__fd is the descriptors, in the order met, depth first.
+    """
+    list__fd = []
+    def mark(value ,expression):
+      if type(expression) is str:
+        if expression in self._map__type:
+          return mark(value ,self._map__type[expression])
+        if expression == "descriptor":
+          list__fd.append(value)
+          return cbor2.CBORTag(TAG__DESCRIPTOR ,len(list__fd) - 1)
+        return value
+      if expression[0] == "list":
+        return [mark(element ,expression[1]) for element in value]
+      return {entry[0]: mark(value[entry[0]] ,entry[1]) for entry in expression[1:]}
+    return mark(value ,expression) ,list__fd
+
   def value_problem(self ,value ,expression ,where="the value"):
     """
     None when value has the structure of the type expression; otherwise what
@@ -229,9 +276,11 @@ class Definition:
     if type(expression) is str:
       if expression in self._map__type:
         return self.value_problem(value ,self._map__type[expression] ,where)
-      want = {"text": str ,"integer": int ,"bytes": bytes ,"boolean": bool ,"handle": int}[expression]
+      want = {"text": str ,"integer": int ,"bytes": bytes ,"boolean": bool ,"handle": int ,"descriptor": int}[expression]
       if type(value) is not want:
         return f"{where} is {type(value).__name__}, not {expression}"
+      if expression == "descriptor" and value < 0:
+        return f"{where} is {value}, which is not an open descriptor"
       return None
     if expression[0] == "list":
       if type(value) is not list:
