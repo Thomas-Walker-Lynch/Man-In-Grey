@@ -32,7 +32,9 @@
     3. reads the journal from standard input;
     4. isolates itself from account A, when the two accounts differ: makes
        its real uid account B's, so the kernel refuses account A's signals,
-       and ignores the signals a terminal sends;
+       ignores the signals a terminal sends, and, when account B is root,
+       moves into the root cgroup, out of account A's, so account A cannot
+       freeze, starve or end it through its cgroup;
     5. starts the guard with the journal on its standard input, and admits
        the journal only when the guard exits 0 having written exactly one
        line to standard output: guard <language> check passed;
@@ -603,6 +605,47 @@ int Man_In_Grey__Gate·Gate·run(
     return true;
   }
 
+  /* A process stays in its parent's cgroup through a setuid start, so the
+     gate begins in account A's. Systemd delegates the cgroups under an
+     account's user service manager, user@<uid>.service, to the account:
+     when the invoking program was started there, as a desktop launches its
+     programs, account A owns the control files of the gate's cgroup, and
+     through them can freeze the gate (cgroup.freeze), have it killed for
+     memory (memory.max), make its forks fail (pids.max) or end it
+     (cgroup.kill). None of these changes the guard's verdict, but each can
+     stop the interpreter partway, leaving its journal half played, a state
+     that account A could arrange to its advantage.
+
+     Root can move a process into any cgroup, and the root cgroup of the
+     unified hierarchy is root's and carries no freeze, memory or pids
+     control. So a gate whose account B is root writes its own pid to
+     /sys/fs/cgroup/cgroup.procs, and the guard and the interpreter, which
+     it starts afterwards, begin there too. A system without the unified
+     hierarchy there, cgroup v1 alone, delegates no cgroups to an account,
+     and the gate stays where it is; a gate whose account B is not root
+     cannot move into a cgroup of root's, and says that it stayed. Returns
+     whether the gate moved. */
+  #define FPA__CGROUP_ROOT_PROCS "/sys/fs/cgroup/cgroup.procs"
+  Local bool leave_invoker_cgroup(void){
+    if( geteuid() != 0 ){
+      say("isolated" ,"account B is not root, so the gate stays in account A's cgroup");
+      return false;
+    }
+    int fd = open(FPA__CGROUP_ROOT_PROCS ,O_WRONLY | O_CLOEXEC);
+    if( fd < 0 ){
+      if( errno == ENOENT ){
+        say("isolated" ,"no unified cgroup hierarchy at /sys/fs/cgroup; the gate stays in its cgroup, which cgroup v1 does not delegate");
+        return false;
+      }
+      die("cannot open %s: %s" ,FPA__CGROUP_ROOT_PROCS ,strerror(errno));
+    }
+    char text[32];
+    int length = snprintf(text ,sizeof text ,"%ld\n" ,(long)getpid());
+    if( write(fd ,text ,(size_t)length) != length ) die("cannot move into the root cgroup: %s" ,strerror(errno));
+    close(fd);
+    return true;
+  }
+
   Local void wait_writable(void){
     struct pollfd p = {.fd = RESULT_FD ,.events = POLLOUT};
     poll(&p ,1 ,-1);
@@ -737,6 +780,9 @@ int Man_In_Grey__Gate·Gate·run(
         ,(long)real_uid ,real_user__name ,(long)geteuid() ,user_name(geteuid()) ,journal_length ,check_only ? ", check only" : "");
     if( isolate_from_invoker() ){
       say("isolated" ,"real uid now %ld (%s); account A can no longer signal the gate" ,(long)getuid() ,user_name(getuid()));
+      if( leave_invoker_cgroup() ){
+        say("isolated" ,"moved into the root cgroup; account A's cgroup no longer holds the gate");
+      }
     }
 
     // the guard

@@ -424,7 +424,7 @@
             <li>clears the environment, setting only <RT·code>PATH</RT·code> and <RT·code>LANG</RT·code>, sets the file mode mask to <RT·code>077</RT·code>, marks the process not dumpable, and changes directory to <RT·code>/</RT·code>;</li>
             <li>records its real ids, account A's, in <RT·code>MIG__REAL_UID</RT·code>, <RT·code>MIG__REAL_GID</RT·code> and <RT·code>MIG__REAL_USER_NAME</RT·code>, for the guard and the interpreter;</li>
             <li>reads the journal from its standard input, up to 16 MiB;</li>
-            <li>when accounts A and B differ, makes its real uid account B's, so the kernel refuses account A's signals, and ignores the signals a terminal sends; see <a href="#sec-isolation"><RT·Counter·read snapshot="sec-isolation" key="counter count"></RT·Counter·read></a>;</li>
+            <li>when accounts A and B differ, makes its real uid account B's, so the kernel refuses account A's signals, ignores the signals a terminal sends, and, when account B is root, moves into the root cgroup, out of account A's; see <a href="#sec-isolation"><RT·Counter·read snapshot="sec-isolation" key="counter count"></RT·Counter·read></a>;</li>
             <li>starts <RT·code>/usr/bin/python3 -E -s -B</RT·code> on the guard, with the journal on its standard input, and goes on only when the guard approves the journal;</li>
             <li>starts the interpreter the same way, with the same journal and one end of a Unix socket pair on its descriptor 3, the gate holding the other, and takes the journal as played only when the interpreter writes its verdict line and exits 0;</li>
             <li>forwards what the interpreter wrote on its descriptor 3, the result and the descriptors sent beside it, to the gate's own descriptor 3; see <a href="#sec-result"><RT·Counter·read snapshot="sec-result" key="counter count"></RT·Counter·read></a>.</li>
@@ -647,6 +647,25 @@
           </p>
         </RT·section>
 
+        <RT·section id="sec-isolation-cgroup">
+          <RT·name>Leaving account A's cgroup</RT·name>
+          <p>
+            Linux groups processes in control groups, cgroups, a tree of directories under <RT·code>/sys/fs/cgroup</RT·code> whose files set what the processes in each may do: <RT·code>cgroup.freeze</RT·code> stops them all, <RT·code>memory.max</RT·code> bounds their memory and has the kernel kill one past it, <RT·code>pids.max</RT·code> bounds their number so that a fork fails, and <RT·code>cgroup.kill</RT·code> ends them all. A process stays in its parent's cgroup when it forks and when it starts a setuid program, so the gate begins in account A's.
+          </p>
+          <p>
+            systemd keeps an account's processes in its slice, <RT·code>user-&lt;uid&gt;.slice</RT·code>. The session scopes in it are root's, but the subtree under the account's user service manager, <RT·code>user@&lt;uid&gt;.service</RT·code>, is delegated to the account: account A owns its control files. A desktop starts its programs there, in <RT·code>app.slice</RT·code>. A gate invoked from such a program could be frozen, starved or ended by account A through its cgroup, after the guard approved the journal and while the interpreter played it, leaving the journal half played. Account A would not change what the interpreter does, but would choose where it stops, and an incoherent state is one account A could arrange to its advantage.
+          </p>
+          <p>
+            Root can move a process into any cgroup, and the root cgroup of the unified hierarchy, cgroup v2, is root's and has no freeze, memory or pids control. So when it isolates itself, a gate whose account B is root writes its own pid to <RT·code>/sys/fs/cgroup/cgroup.procs</RT·code>, and the guard and the interpreter, started afterwards, begin there too:
+          </p>
+          <RT·code>
+            gate: isolated: moved into the root cgroup; account A's cgroup no longer holds the gate
+          </RT·code>
+          <p>
+            A system with cgroup v1 alone has no <RT·code>cgroup.procs</RT·code> at the top of <RT·code>/sys/fs/cgroup</RT·code> and delegates no cgroups to an account, and the gate says that it stays. A gate whose account B is not root cannot move into a cgroup of root's, and says so too; its run can still be stopped through account A's cgroup.
+          </p>
+        </RT·section>
+
         <RT·section id="sec-isolation-account">
           <RT·name>Who account A is, afterwards</RT·name>
           <p>
@@ -663,6 +682,7 @@
             <li>Before the journal is read, account A can still stop the gate. Nothing has been done, so nothing is lost.</li>
             <li>When accounts A and B are the same, there is nothing to isolate, and the gate does not; the person can interrupt his own run, which has no more than his own rights.</li>
             <li>Root can signal any process. Root is trusted.</li>
+            <li>A gate whose account B is not root stays in account A's cgroup, which account A can control when systemd delegated it; see <a href="#sec-isolation-cgroup"><RT·Counter·read snapshot="sec-isolation-cgroup" key="counter count"></RT·Counter·read></a>.</li>
             <li>The interpreter can still fail partway on its own. Isolation removes account A as a cause, which a transactional play needs, but does not make the play transactional; see <a href="#sec-transaction"><RT·Counter·read snapshot="sec-transaction" key="counter count"></RT·Counter·read></a>.</li>
           </ul>
         </RT·section>
@@ -815,7 +835,7 @@
             Run by root, <RT·code>Man-In-Grey install</RT·code> runs <RT·code>install-gate</RT·code> directly. Run by any other account, such as a developer account without <RT·code>sudo</RT·code>, it runs it through <RT·code>su</RT·code>, which asks for root's password; it first makes a constraints file's path absolute, as root's shell starts in another directory. Root can also run <RT·code>install-gate install</RT·code> itself, with the same arguments. Either way the administrator runs, with root's rights, the <RT·code>install-gate</RT·code> and the files of the tree he names, so he is to install only a tree he has reviewed.
           </p>
           <p>
-            It copies <RT·code>Man_In_Grey/</RT·code> and the one gate named from <RT·code>Man_In_Grey__Gate/</RT·code> into the directory, side by side, as the gate's compiled paths expect. Every file and directory it installs is owned by root and writable by no other account, except the gate, which it gives to account B, the owner account named, and to a group, and then makes setuid and setgid. The order matters, since changing a file's owner clears its setuid and setgid bits. The gate's mode is <RT·code>6755</RT·code>: the mode <RT·code>755</RT·code> with the setuid bit, <RT·code>4000</RT·code>, and the setgid bit, <RT·code>2000</RT·code>, added. The setgid bit gives the gate the group as its effective gid, and an interpreter makes its files with the effective gid's group: only root can give a file away, so an interpreter whose effective uid is that of an account B other than root makes files that account B owns, in that group. The group is account B's own unless <RT·code>group &lt;group&gt;</RT·code> names another, such as a group the web server reads through. When account B and the group are both root's, the setgid bit changes nothing, and the mode is <RT·code>4755</RT·code>.
+            It copies <RT·code>Man_In_Grey/</RT·code> and the one gate named from <RT·code>Man_In_Grey__Gate/</RT·code> into the directory, side by side, as the gate's compiled paths expect. Every file and directory it installs is owned by root and writable by no other account, except the gate, which it gives to account B, the owner account named, and to a group, and then makes setuid and setgid. The order matters, since changing a file's owner clears its setuid and setgid bits. The gate's mode is <RT·code>6755</RT·code>: the mode <RT·code>755</RT·code> with the setuid bit, <RT·code>4000</RT·code>, and the setgid bit, <RT·code>2000</RT·code>, added. The setgid bit gives the gate the group as its effective gid, and an interpreter makes its files with the effective gid's group: only root can give a file away, so an interpreter whose effective uid is that of an account B other than root makes files that account B owns, in that group. The group is account B's own unless <RT·code>group &lt;group&gt;</RT·code> names another, such as a group the web server reads through. The setgid bit is set when the group is root's too. The setuid bit sets only the effective uid, so without the setgid bit a gate owned by root would start its guard and interpreter with root's effective uid and the invoking account's effective gid, and every file and directory the interpreter made would be in the invoking account's group.
           </p>
           <p>
             With <RT·code>constraints &lt;file&gt;</RT·code>, a Python file of predicates, <RT·code>install-gate</RT·code> puts them between the constraint marks of the gate's guard. Without it, the constraints of a guard already installed are kept, so installing again brings a new guard and keeps the administrator's constraints; a first installation gets the guard's as promoted, which refuse every account. The constraints of every other installed guard are kept too. <RT·code>install-gate</RT·code> refuses a directory that is not absolute, that an account other than root owns or can write, or that is on a file system mounted <RT·code>nosuid</RT·code>, where the kernel ignores the setuid and setgid bits, as it does on removable drives and some separately mounted <RT·code>/home</RT·code> directories. It ends by printing the installed gate's flags, as root sees them: real uid and gid root's, effective uid account B's, effective gid the group's. Promotion replaces files and sets neither the owner nor the setuid bit, so the installation is redone after each promotion that changes the gate, the guard or the interpreter. The installation is a candidate for Man-In-Grey itself, once there is a language for installing programs.

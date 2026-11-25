@@ -13,9 +13,11 @@ the gate's compiled paths expect. Every file and directory it installs is
 owned by root and writable by no other account, except the gate, which is
 given to the owner account and the group, and made setuid and setgid: mode
 6755. The group is the owner's own group unless group <group> names
-another; the interpreter makes files with that group. When both are root's,
-the setgid bit changes nothing and the mode is 4755. It then prints the
-gate's flags.
+another; the interpreter makes files with that group. The setgid bit is set
+when the group is root's too: the setuid bit sets only the effective uid, so
+without it the guard and the interpreter would run with the invoking
+account's gid, and the files they made would be in its group. It then
+prints the gate's flags.
 
 A guard's constraints are the predicates written at its top, between the
 lines '# constraints begin' and '# constraints end'. With constraints
@@ -227,7 +229,7 @@ def install(gate ,owner ,dirp__install ,constraints=None ,group=None):
 
   # chown clears the setuid and setgid bits, so the mode is set after it
   os.chown(installed_gate ,account.pw_uid ,gid)
-  mode = 0o4755 if account.pw_uid == 0 and gid == 0 else 0o6755
+  mode = 0o6755
   os.chmod(installed_gate ,mode)
   say(f"installed {installed_gate}, owner {owner}:{grp.getgrgid(gid).gr_name}, mode {mode:o}")
 
